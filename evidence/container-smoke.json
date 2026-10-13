@@ -1,0 +1,38 @@
+[
+  {
+    "route": "/health",
+    "status": 200,
+    "body": {
+      "ok": true,
+      "service": "mind-space-backend",
+      "profile": "internal-test-v1"
+    }
+  },
+  {
+    "route": "/ready",
+    "status": 503,
+    "body": {
+      "ok": false,
+      "profile": "internal-test-v1",
+      "components": {
+        "databaseConnection": "reachable",
+        "durableSessionStore": "unavailable",
+        "identity": "unavailable",
+        "dialogue": "unavailable",
+        "speech": "unavailable"
+      }
+    }
+  },
+  {
+    "route": "/v1/session/commands",
+    "status": 401,
+    "body": {
+      "ok": false,
+      "error": "unauthenticated"
+    }
+  },
+  {
+    "route": "/v1/session/channel",
+    "handshake": "HTTP/1.1 401 Unauthorized"
+  }
+]

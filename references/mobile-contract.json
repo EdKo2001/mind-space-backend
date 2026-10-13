@@ -1,0 +1,29 @@
+{
+  "protocolVersion": 1,
+  "source": "MindSpace/src/features/session/mock-therapist/contract.ts",
+  "contractSha256": "2d72a27ac45c43aff0598c39c86e71eb559eca4d156b956f6843438c75f28c20",
+  "presetSourceSha256": "f645bcb7d4b5e3997806e73e9a0b65248eb7a6174c117c3b083d2d2df7f3da4d",
+  "emotionIds": [
+    "neutral",
+    "listening",
+    "empathetic",
+    "warm_smile",
+    "concerned",
+    "thoughtful",
+    "encouraging",
+    "serious",
+    "happy",
+    "sad",
+    "surprised",
+    "curious",
+    "understanding",
+    "reassuring",
+    "confused",
+    "compassionate",
+    "optimistic",
+    "reflective",
+    "disappointed",
+    "calm"
+  ],
+  "note": "Types and validators preserved; renderer imports replaced with actual preset IDs."
+}

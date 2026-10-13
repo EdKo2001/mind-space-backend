@@ -1,0 +1,28 @@
+name: mindspace-backend
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: mindspace
+      POSTGRES_USER: mindspace
+      POSTGRES_PASSWORD: local-development-only
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mindspace -d mindspace"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  api:
+    build: .
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      DATABASE_URL: postgresql://mindspace:local-development-only@db:5432/mindspace
+    ports:
+      - "127.0.0.1:${API_PORT:-3001}:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres-data:
