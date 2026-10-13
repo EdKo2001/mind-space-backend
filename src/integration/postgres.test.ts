@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import type { TestContext } from 'node:test';
 import { Pool } from 'pg';
@@ -13,6 +14,11 @@ import { SessionError } from '../session/contracts';
 import type { Result } from '../session/contracts';
 import { migrationSql } from '../database/migrations';
 import { dashboardSnapshot } from '../dashboard/service';
+import WebSocket from 'ws';
+import { createServer } from '../transport/server';
+import { createDatabaseProbe } from '../database/connection';
+import { SessionWakeups } from '../transport/wakeups';
+import { drainMetadataOutbox, startDatabaseEvents } from '../database/events';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is required for real PostgreSQL integration tests; no simulated pass');
@@ -25,7 +31,9 @@ const errorCode = (code: string) => (error: unknown) => error instanceof Session
 async function fixture(t: TestContext) {
   const schemaName = `ms_test_${randomUUID().replaceAll('-', '')}`;
   const admin = new Pool({ connectionString }), a = PostgresSessionStore.connect(connectionString!, schemaName), b = PostgresSessionStore.connect(connectionString!, schemaName);
+  const cleanups: (() => Promise<void>)[] = [];
   t.after(async () => {
+    for (const cleanup of cleanups.reverse()) await cleanup();
     await a.close(); await b.close();
     // Generated ms_test namespace contains only fixtures owned by this test; never drop application schema/volume.
     await admin.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`); await admin.end();
@@ -34,7 +42,7 @@ async function fixture(t: TestContext) {
   let clock = Date.now();
   const serviceA = new SessionService(a, policy, () => clock), serviceB = new SessionService(b, policy, () => clock);
   await serviceA.seedTestAccount(principal.accountId, 2);
-  return { a, b, serviceA, serviceB, admin, schema: a.schema, schemaName, advance(ms: number) { clock += ms; } };
+  return { a, b, serviceA, serviceB, admin, schema: a.schema, schemaName, advance(ms: number) { clock += ms; }, cleanup(work: () => Promise<void>) { cleanups.push(work); } };
 }
 async function active(f: Awaited<ReturnType<typeof fixture>>) {
   const started = await f.serviceA.start(principal, 'start', mode), sessionId = started.snapshot.sessionId;
@@ -42,6 +50,84 @@ async function active(f: Awaited<ReturnType<typeof fixture>>) {
   const admitted = await f.serviceA.confirm(principal, sessionId, 'confirm', ready.snapshot.sessionRevision, mode);
   return { sessionId, ready, admitted };
 }
+
+test('real PostgreSQL publishes empty wakeups atomically and fences old state, expired leases and failed commits', { timeout: 5000 }, async t => {
+  const f = await fixture(t);
+  let notifications = 0;
+  const listener = await f.b.listenWakeups(() => { notifications++; }); f.cleanup(() => listener.stop());
+  const channel = `ms_events_${createHash('sha256').update(`mindspace:${f.schemaName}`).digest('hex').slice(0,24)}`;
+  const observer = await f.admin.connect(), payloads: string[] = [];
+  f.cleanup(async () => { observer.release(true); });
+  observer.on('notification', notice => { if (notice.channel === channel) payloads.push(notice.payload!); });
+  await observer.query(`LISTEN ${channel}`);
+  const started = await f.serviceA.start(principal, 'start', mode), first = (await f.a.claimOutbox(1, 10_000))[0];
+  await f.serviceB.ready(principal, started.snapshot.sessionId, readiness);
+  assert.equal(await f.a.publishOutboxWakeup(first.event.eventId, first.claimToken), 'superseded');
+  const second = (await f.b.claimOutbox(1, 10_000))[0];
+  await f.admin.query(`UPDATE ${f.schema}.outbox SET claim_until=NOW()-INTERVAL '1 second' WHERE event_id=$1`, [second.event.eventId]);
+  assert.equal(await f.a.publishOutboxWakeup(second.event.eventId, second.claimToken), 'not_current');
+  const reclaimed = (await f.a.claimOutbox(1, 10_000))[0];
+  assert.equal(await f.b.publishOutboxWakeup(second.event.eventId, second.claimToken), 'not_current');
+  await f.admin.query(`CREATE FUNCTION ${f.schema}.reject_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Synthetic publication failure'; END $$;
+    CREATE TRIGGER reject_publication BEFORE UPDATE ON ${f.schema}.outbox FOR EACH ROW WHEN (NEW.completion='published') EXECUTE FUNCTION ${f.schema}.reject_publication();`);
+  await assert.rejects(f.a.publishOutboxWakeup(reclaimed.event.eventId, reclaimed.claimToken), /Synthetic publication failure/);
+  const pending = await f.admin.query(`SELECT delivered_at,claim_token FROM ${f.schema}.outbox WHERE event_id=$1`, [reclaimed.event.eventId]);
+  assert.equal(pending.rows[0].delivered_at, null); assert.equal(pending.rows[0].claim_token, reclaimed.claimToken);
+  await delay(20); assert.equal(notifications, 0);
+  await f.admin.query(`DROP TRIGGER reject_publication ON ${f.schema}.outbox`);
+  assert.equal(await f.a.publishOutboxWakeup(reclaimed.event.eventId, reclaimed.claimToken), 'published');
+  const began = Date.now(); while (!notifications || !payloads.length) { if (Date.now()-began > 2000) throw new Error('Wakeup was not committed'); await delay(10); }
+  assert.deepEqual(payloads, ['']);
+  assert.equal(notifications, 1); assert.equal(await f.b.publishOutboxWakeup(reclaimed.event.eventId, reclaimed.claimToken), 'not_current');
+});
+
+test('real PostgreSQL external worker update reaches an authenticated WebSocket through a separate API store', { timeout: 5000 }, async t => {
+  const f = await fixture(t), { sessionId } = await active(f), wakeups = new SessionWakeups();
+  const listener = await f.b.listenWakeups(() => wakeups.wake()); f.cleanup(() => listener.stop());
+  const app = await createServer({ service: f.serviceB, database: createDatabaseProbe(), live: { wakeups, pollIntervalMs: 60_000 },
+    identity: { async verify(header) { assert.equal(header, 'Bearer synthetic-test-token'); return { ...principal }; } } });
+  f.cleanup(() => app.close());
+  const address = await app.listen({ port: 0, host: '127.0.0.1' });
+  const socket = new WebSocket(`${address.replace('http:', 'ws:')}/v1/session/channel`, { headers: { authorization: 'Bearer synthetic-test-token' } });
+  socket.on('error', () => {}); f.cleanup(async () => { socket.terminate(); });
+  await once(socket, 'open', { signal: AbortSignal.timeout(2000) });
+  const initial = once(socket, 'message', { signal: AbortSignal.timeout(2000) });
+  socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.snapshot', sessionId, commandId: 'snapshot' })); await initial;
+  const response = await f.serviceA.commitUtterance(principal, sessionId, 'input', 'utterance', 'SYNTHETIC_PRIVATE_INPUT');
+  const eventMessage = once(socket, 'message', { signal: AbortSignal.timeout(2000) });
+  const drained = await drainMetadataOutbox(f.a);
+  assert.equal(drained.published, 1); assert.equal(drained.superseded, 3);
+  const [bytes] = await eventMessage, live = JSON.parse(bytes.toString());
+  assert.equal(live.type, 'events'); assert.equal(live.value.snapshot.authorization.responseId, response.authorization!.responseId);
+  assert.equal(bytes.toString().includes('SYNTHETIC_PRIVATE_INPUT'), false);
+  await f.serviceA.end(principal, sessionId, 'end');
+  const terminal = once(socket, 'message', { signal: AbortSignal.timeout(2000) }); await drainMetadataOutbox(f.a);
+  assert.equal(JSON.parse((await terminal)[0].toString()).value.snapshot.lifecycle, 'ended');
+});
+
+test('real PostgreSQL event worker reconnects after its own LISTEN connection is terminated', { timeout: 5000 }, async t => {
+  const f = await fixture(t), wakeups = new SessionWakeups();
+  let notices = 0; wakeups.subscribe(() => { notices++; });
+  const worker = await startDatabaseEvents(f.b, wakeups, 10); f.cleanup(() => worker.stop());
+  const channel = `ms_events_${createHash('sha256').update(`mindspace:${f.schemaName}`).digest('hex').slice(0,24)}`;
+  const listenSql = `LISTEN ${channel}`;
+  const original = (await f.admin.query('SELECT pid FROM pg_stat_activity WHERE query=$1 AND state=$2', [listenSql, 'idle'])).rows[0].pid;
+  // Terminate only this generated fixture namespace's dedicated listener, never runtime/database services.
+  assert.equal((await f.admin.query('SELECT pg_terminate_backend($1) AS stopped', [original])).rows[0].stopped, true);
+  const began = Date.now();
+  while (true) {
+    const restored = (await f.admin.query('SELECT pid FROM pg_stat_activity WHERE query=$1 AND state=$2', [listenSql, 'idle'])).rows[0];
+    if (restored && restored.pid !== original) break;
+    if (Date.now()-began > 2000) throw new Error('Listener did not reconnect'); await delay(10);
+  }
+  notices = 0; await f.serviceA.start(principal, 'start', mode);
+  const sent = Date.now(); while (!notices) { if (Date.now()-sent > 2000) throw new Error('Reconnected listener did not receive publication'); await delay(10); }
+  assert.equal((await f.admin.query(`SELECT completion FROM ${f.schema}.outbox`)).rows[0].completion, 'published');
+});
+test('real PostgreSQL store closes its dedicated listener and tolerates repeated shutdown', { timeout: 5000 }, async t => {
+  const f = await fixture(t), listener = await f.a.listenWakeups(() => {});
+  await f.a.close(); assert.equal(listener.healthy(), false); await listener.stop(); await f.a.close();
+});
 
 test('real PostgreSQL upgrades an existing version-1 schema without changing data or its checksum', async t => {
   const f = await fixture(t);

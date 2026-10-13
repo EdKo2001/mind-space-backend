@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { Pool } from 'pg';
-import type { PoolClient } from 'pg';
+import type { PoolClient, Notification } from 'pg';
 import { SessionError } from '../session/contracts';
 import type { CommandRecord, DatabaseState, SessionEvent, SessionStore, StoredSession, TestLedgerEntry, TransactionScope } from '../session/contracts';
 import { decodeSnapshot, decodeEvent } from '../session/wire';
@@ -20,9 +20,13 @@ function safeNumber(value: unknown) {
 export class PostgresSessionStore implements SessionStore, DatabaseProbe, DashboardReader {
   readonly schema: string;
   private readonly namespace: string;
+  private readonly wakeupChannel: string;
+  private readonly listeners = new Set<{ stop(): Promise<void> }>();
+  private closing: Promise<void> | undefined;
   constructor(private readonly pool: Pool, schema = 'mindspace_backend') {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(schema)) throw new Error('Invalid schema name');
     this.schema = `"${schema}"`; this.namespace = `mindspace:${schema}`;
+    this.wakeupChannel = `ms_events_${createHash('sha256').update(this.namespace).digest('hex').slice(0,24)}`;
   }
   static connect(connectionString: string, schema?: string) {
     const url = new URL(connectionString);
@@ -61,7 +65,55 @@ export class PostgresSessionStore implements SessionStore, DatabaseProbe, Dashbo
       return result.rowCount === 1;
     } catch { return false; }
   }
-  async close() { await this.pool.end(); }
+  close() {
+    this.closing ??= (async () => { await Promise.allSettled([...this.listeners].map(listener => listener.stop())); await this.pool.end(); })();
+    return this.closing;
+  }
+  async listenWakeups(wake: () => void) {
+    const client = await this.pool.connect();
+    const channel = this.wakeupChannel;
+    let healthy = true, released = false;
+    const onNotification = (notice: Notification) => { if (healthy && notice.channel === this.wakeupChannel) wake(); };
+    function release() {
+      healthy = false;
+      if (!released) { released = true; client.removeListener('notification', onNotification); client.release(true); }
+    }
+    client.on('error', release); client.on('end', release); client.on('notification', onNotification);
+    try { await client.query(`LISTEN ${this.wakeupChannel}`); }
+    catch (error) { release(); throw error; }
+    let stopping: Promise<void> | undefined;
+    const listener = { healthy: () => healthy, stop: (): Promise<void> => {
+      stopping ??= (async () => {
+        try { if (healthy) await client.query(`UNLISTEN ${channel}`); }
+        finally { release(); this.listeners.delete(listener); }
+      })(); return stopping;
+    } };
+    this.listeners.add(listener); return listener;
+  }
+  /** Atomic claim/state verification + NOTIFY + outbox completion. Payload is deliberately empty. */
+  async publishOutboxWakeup(eventId: string, claimToken: string): Promise<'published' | 'superseded' | 'not_current'> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN'); await this.globalLock(client, false);
+      const owner = await client.query(`SELECT s.account_id FROM ${this.schema}.outbox o JOIN ${this.schema}.sessions s USING(session_id) WHERE o.event_id=$1`, [eventId]);
+      if (!owner.rows.length) { await client.query('COMMIT'); return 'not_current'; }
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`${this.namespace}:account:${owner.rows[0].account_id}`]);
+      const result = await client.query(`SELECT o.payload,s.snapshot,a.allowed,EXTRACT(EPOCH FROM clock_timestamp())*1000 AS now_ms
+        FROM ${this.schema}.outbox o JOIN ${this.schema}.sessions s USING(session_id) JOIN ${this.schema}.accounts a ON a.account_id=s.account_id
+        WHERE o.event_id=$1 AND o.claim_token=$2 AND o.claim_until>clock_timestamp() AND o.delivered_at IS NULL FOR UPDATE OF o`, [eventId, claimToken]);
+      const row = result.rows[0];
+      if (!row) { await client.query('COMMIT'); return 'not_current'; }
+      const event = decodeEvent(row.payload), snapshot = decodeSnapshot(row.snapshot), now = Number(row.now_ms);
+      const superseded = event.snapshot.sessionRevision !== snapshot.sessionRevision;
+      if (!superseded && ((snapshot.lifecycle === 'active' && (!row.allowed || snapshot.endsAt! <= now))
+        || (snapshot.lifecycle === 'preparing' && (!row.allowed || snapshot.reservationExpiresAt <= now)))) {
+        await client.query('COMMIT'); return 'not_current';
+      }
+      await client.query(`UPDATE ${this.schema}.outbox SET delivered_at=clock_timestamp(),claim_token=NULL,claim_until=NULL,completion=$2 WHERE event_id=$1`, [eventId, superseded ? 'superseded' : 'published']);
+      if (!superseded) await client.query('SELECT pg_notify($1,$2)', [this.wakeupChannel, '']);
+      await client.query('COMMIT'); return superseded ? 'superseded' : 'published';
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
   /** One SQL snapshot. Completion time is the first committed terminal outbox observation, not audio delivery. */
   async readDashboard(range: DashboardRange): Promise<DashboardTotals> {
     const result = await this.pool.query(`WITH terminal AS (

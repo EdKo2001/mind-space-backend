@@ -1,6 +1,8 @@
 import { MemorySessionStore } from './session/memory-store';
 import { SessionService } from './session/service';
 import { startMaintenance } from './database/maintenance';
+import { startDatabaseEvents } from './database/events';
+import { SessionWakeups } from './transport/wakeups';
 import { PostgresSessionStore } from './database/postgres-store';
 import { createDatabaseProbe } from './database/connection';
 import { createServer } from './transport/server';
@@ -20,14 +22,20 @@ async function main() {
   const localDashboard = process.env.DASHBOARD_LOCAL_AGGREGATES;
   if (localDashboard && localDashboard !== '1') { await storage?.close(); throw new Error('Invalid dashboard mode'); }
   const database = createDatabaseProbe(process.env.DATABASE_URL);
+  const wakeups = new SessionWakeups();
   const app = await createServer({ service, database, storage,
+    live: storage ? { wakeups } : undefined,
     dashboard: localDashboard === '1' && storage ? { reader: storage, localAggregates: true,
       allowedOrigins: (process.env.DASHBOARD_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean) } : undefined,
   }).catch(async error => { await database.close(); await storage?.close(); throw error; });
   let maintenance: ReturnType<typeof startMaintenance> | undefined;
-  app.addHook('preClose', async () => { await maintenance?.stop(); });
+  let events: Awaited<ReturnType<typeof startDatabaseEvents>> | undefined;
+  app.addHook('preClose', async () => { await maintenance?.stop(); await events?.stop(); });
   let address: string;
-  try { address = await app.listen({ port, host: process.env.HOST ?? '127.0.0.1' }); } catch (error) { await app.close(); throw error; }
+  try {
+    events = storage ? await startDatabaseEvents(storage, wakeups) : undefined;
+    address = await app.listen({ port, host: process.env.HOST ?? '127.0.0.1' });
+  } catch (error) { await app.close(); throw error; }
   maintenance = storage ? startMaintenance(service, storage) : undefined;
   console.log(`MindSpace internal backend listening at ${address}; connected services unavailable`);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void app.close().catch(() => { process.exitCode = 1; }); });

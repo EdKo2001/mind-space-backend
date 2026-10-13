@@ -1,0 +1,51 @@
+{
+  "checkedAt": "2026-10-13T20:39:20.900Z",
+  "profile": "internal-test-v1",
+  "validation": {
+    "check": "PASS",
+    "unitAndTransport": {
+      "passed": 53,
+      "failed": 0,
+      "skipped": 0
+    },
+    "realPostgres": {
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0
+    },
+    "httpSmoke": "PASS",
+    "liveDashboardAdapter": "PASS"
+  },
+  "runtime": {
+    "healthStatus": 200,
+    "readyStatus": 503,
+    "unauthenticatedCommandStatus": 401,
+    "readiness": {
+      "ok": false,
+      "profile": "internal-test-v1",
+      "components": {
+        "databaseConnection": "reachable",
+        "durableSessionStore": "available",
+        "identity": "unavailable",
+        "dialogue": "unavailable",
+        "speech": "unavailable"
+      }
+    },
+    "database": {
+      "schemaVersions": [
+        1,
+        2
+      ],
+      "runtimeAccounts": 0,
+      "testSchemasRemaining": 0,
+      "listenerConnections": 1
+    }
+  },
+  "claims": {
+    "liveTestsUseSyntheticIdentities": true,
+    "realSocketAndDatabaseDeliveryVerified": true,
+    "clientReceiptOrPlaybackProven": false,
+    "providersConnected": false,
+    "mobileConnected": false
+  }
+}

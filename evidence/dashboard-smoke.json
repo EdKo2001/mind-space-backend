@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-13T20:20:47.719Z",
+  "checkedAt": "2026-10-13T20:37:53.884Z",
   "endpoint": "http://127.0.0.1:3001/v1/dashboard",
   "origin": "http://127.0.0.1:5173",
   "status": 200,
@@ -23,10 +23,10 @@
     "version": 1,
     "profile": "internal-test-v1",
     "scope": "local-aggregate",
-    "capturedAt": "2026-10-13T20:20:47.694Z",
+    "capturedAt": "2026-10-13T20:37:53.860Z",
     "range": {
       "start": "2026-10-13T05:00:00.000Z",
-      "end": "2026-10-13T20:20:47.632Z",
+      "end": "2026-10-13T20:37:53.773Z",
       "timezone": "America/Chicago"
     },
     "comparisons": {

@@ -81,10 +81,19 @@ export function decodeCommand(raw: unknown, limits: CommandLimits): SessionComma
   }
 }
 
-export type CommandResponse = { type: 'result'; value: Result } | { type: 'snapshot'; value: Replay };
+type CommandValue = { type: 'result'; value: Result } | { type: 'snapshot'; value: Replay };
+export type CommandResponse = CommandValue & { commandId: string };
+/** Correlation wraps only validated commands; the error boundary never reflects malformed input. */
+export class CommandFailure extends Error {
+  constructor(readonly commandId: string, readonly reason: unknown) { super('Command failed'); }
+}
 /** The principal must be verified by the future connection boundary; JSON cannot supply it. */
 export async function dispatchCommand(service: SessionService, principal: Principal, raw: unknown): Promise<CommandResponse> {
   const command = decodeCommand(raw, { maxTranscriptChars: service.policy.maxUtteranceChars });
+  try { return { ...await executeCommand(service, principal, command), commandId: command.commandId }; }
+  catch (error) { throw new CommandFailure(command.commandId, error); }
+}
+async function executeCommand(service: SessionService, principal: Principal, command: SessionCommand): Promise<CommandValue> {
   switch (command.type) {
     case 'session.start': return { type: 'result', value: await service.start(principal, command.commandId, command.mode, command.kind) };
     case 'session.confirm': return { type: 'result', value: await service.confirm(principal, command.sessionId, command.commandId, command.revision, command.mode) };
