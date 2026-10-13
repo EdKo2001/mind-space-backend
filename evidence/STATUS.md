@@ -24,3 +24,7 @@ October13,2026.
 - Expanded real PostgreSQL regression reproduced31 dates versus721 hourly results before the SQL correction. Multi-day requests now select one peak per IANA-zone date with actual timestamps; single calendar days retain hourly samples, including23/25-hour Chicago DST days. Both use `[start,end)`.
 - Check/66 tests/HTTP smoke/Docker build/27 real database tests PASS. Live frontend adapter smoke and browser confirmed Today17 hourly points,7-day7 peaks and30-day30 peaks. `dashboard-daily-peaks.png` is the current rendered multi-day view; preceding screenshots record the earlier hourly implementation.
 - Provider identity/AI/voice/media/native and production policies remain pending; full backend goal is not claimed complete by this chart correction.
+
+## Connected-session prerequisite audit
+
+`connection-readiness.json` records current health200/readiness503, unauthenticated401 and unconfigured identity503, migrations1+2,0 runtime accounts,66 demo rows/721 samples and0 test schemas. The local DB demo is verified; a connected authenticated AI/voice/avatar session remains blocked on the user-deferred identity/provider inputs and temporary-media policy. Fixture transport/cancellation tests and synthetic voice metrics do not prove audible delivery or latency targets. The broader goal is not complete.
