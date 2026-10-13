@@ -54,6 +54,11 @@ export class DashboardDemo {
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
   }
   async readDemo(range: DashboardRange) {
+    const calendarDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: range.timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    // end is exclusive: a complete historical calendar day still needs hourly samples.
+    const intraday = calendarDate.format(new Date(range.start)) === calendarDate.format(new Date(Date.parse(range.end)-1));
     // One read transaction gives a consistent snapshot even while the explicit seed command reruns.
     const client = await this.pool.connect();
     try {
@@ -64,7 +69,12 @@ export class DashboardDemo {
         SUM(spend)::float8 AS spend, SUM(failures)::float8/NULLIF(SUM(requests),0)*100 AS failed
         FROM ${this.schema}.sessions WHERE ended_at >= $1 AND ended_at < $2`, [range.start, range.end]);
       const live = await client.query(`SELECT * FROM ${this.schema}.sessions WHERE ended_at IS NULL ORDER BY id`);
-      const samples = await client.query(`SELECT at,count FROM ${this.schema}.samples WHERE at >= $1 AND at <= $2 ORDER BY at`, [range.start, range.end]);
+      const samples = intraday
+        ? await client.query(`SELECT at,count FROM ${this.schema}.samples WHERE at >= $1 AND at < $2 ORDER BY at`, [range.start, range.end])
+        : await client.query(`SELECT at,count FROM (
+            SELECT at,count,ROW_NUMBER() OVER (PARTITION BY (at AT TIME ZONE $3)::date ORDER BY count DESC,at) AS sample_rank
+            FROM ${this.schema}.samples WHERE at >= $1 AND at < $2
+          ) peaks WHERE sample_rank=1 ORDER BY at`, [range.start, range.end, range.timezone]);
       const captured = await client.query('SELECT NOW() AS at');
       await client.query('COMMIT');
       const value = totals.rows[0];

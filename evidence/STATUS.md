@@ -18,3 +18,9 @@ October13,2026.
 - Actual dashboard browser proved SQL answers14→77→restored14 after Refresh; search/status/detail/reporting-period interactions and1440×900/375×667 layouts inspected. Screenshot evidence lives in the standalone dashboard `evidence/db-demo/`.
 - Temporary Docker read-only storage error recovered with volume-preserving desktop restart. All27 actual PostgreSQL tests passed after recovery in the built API container.
 - Current authoritative runtime accounts0, migrations1+2; no real-user/provider/mobile integration. Earlier live-session-checkpoint.json records the preceding session milestone (65+26); this checkpoint adds one test in each suite.
+
+## Database demo daily peaks correction
+
+- Expanded real PostgreSQL regression reproduced31 dates versus721 hourly results before the SQL correction. Multi-day requests now select one peak per IANA-zone date with actual timestamps; single calendar days retain hourly samples, including23/25-hour Chicago DST days. Both use `[start,end)`.
+- Check/66 tests/HTTP smoke/Docker build/27 real database tests PASS. Live frontend adapter smoke and browser confirmed Today17 hourly points,7-day7 peaks and30-day30 peaks. `dashboard-daily-peaks.png` is the current rendered multi-day view; preceding screenshots record the earlier hourly implementation.
+- Provider identity/AI/voice/media/native and production policies remain pending; full backend goal is not claimed complete by this chart correction.

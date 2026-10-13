@@ -19,6 +19,13 @@ async function main() {
     assert.equal(snapshot.source,'db-demo'); assert.equal(snapshot.connected,4); assert.equal(snapshot.reconnecting,2);
     assert.equal(snapshot.sessions.length,6); assert(snapshot.sessions.every(row => row.id.startsWith('DEMO-')));
     assert(snapshot.concurrency.length > 0); assert.equal(snapshot.forecast,null);
+    assert(snapshot.concurrency.every(point => Date.parse(point.at) >= Date.parse(snapshot.range.start)
+      && Date.parse(point.at) < Date.parse(snapshot.range.end)));
+    if (snapshot.granularity === 'daily') {
+      const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' });
+      assert.equal(new Set(snapshot.concurrency.map(point => date.format(new Date(point.at)))).size,snapshot.concurrency.length);
+      assert(snapshot.concurrency.length <= snapshot.range.calendarDays);
+    }
     assert.equal(snapshot.health.find(row => row.name === 'Voice service').status,'Unknown');
     snapshots.push(snapshot);
   }

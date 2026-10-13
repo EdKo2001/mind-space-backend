@@ -34,7 +34,23 @@ test('PostgreSQL demo seed is idempotent; real HTTP reads scoped totals and subs
   assert.equal(response.status,200); assert.equal(response.headers.get('access-control-allow-origin'),'http://127.0.0.1:5175');
   const value = await response.json() as Awaited<ReturnType<DashboardDemo['readDemo']>>;
   assert.equal(value.synthetic,true); assert.equal(value.completed,60); assert.equal(value.connected,4); assert.equal(value.reconnecting,2);
-  assert.equal(value.sessions.length,6); assert.equal(value.concurrency.length,721); assert.equal(typeof value.failedPercent,'number');
+  assert.equal(value.sessions.length,6); assert.equal(typeof value.failedPercent,'number');
+  const calendarDate = (at: string, timezone: string) => new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(at));
+  assert.equal(new Set(value.concurrency.map(point => calendarDate(point.at, range.timezone))).size,value.concurrency.length,
+    'multi-day charts must return one peak per selected-zone calendar date, not hourly points');
+  const expectedPeaks = await pool.query(`SELECT MAX(count)::int AS count FROM "${schema}".samples
+    WHERE at >= $1 AND at < $2 GROUP BY (at AT TIME ZONE $3)::date ORDER BY (at AT TIME ZONE $3)::date`,
+  [range.start,range.end,range.timezone]);
+  assert.deepEqual(value.concurrency.map(point => point.count),expectedPeaks.rows.map(row => row.count));
+  const today = { ...range, start: new Date(now.getTime()-5*3600_000).toISOString() };
+  // A bounded within-day interval must retain every actual hourly sample.
+  today.timezone = 'UTC';
+  today.start = new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())).toISOString();
+  const intraday = await demo.readDemo(today);
+  const hourlyCount = await pool.query(`SELECT COUNT(*)::int AS n FROM "${schema}".samples WHERE at >= $1 AND at < $2`,[today.start,today.end]);
+  assert.equal(intraday.concurrency.length,hourlyCount.rows[0].n);
   assert.equal(value.queueDepth,null); assert.equal(value.health.find(h => h.name === 'Voice service')?.status,'Unknown');
   await pool.query(`UPDATE "${schema}".sessions SET answers=77 WHERE id='DEMO-061'`);
   const updated = await (await fetch(url)).json() as typeof value;
@@ -45,4 +61,20 @@ test('PostgreSQL demo seed is idempotent; real HTTP reads scoped totals and subs
   assert.equal((await fetch(`${url}&token=secret`)).status,400);
   const real = await (await fetch(url.replace('/demo?','?'))).json() as { sessions: unknown; connected: unknown };
   assert.equal(real.sessions,null); assert.equal(real.connected,null);
+  // A historical 23-hour Chicago DST day is intraday despite touching two UTC dates.
+  await demo.seed(new Date('2026-03-09T05:00:00.000Z'));
+  const dstRange = { start: '2026-03-08T06:00:00.000Z', end: '2026-03-09T05:00:00.000Z', timezone: 'America/Chicago' };
+  const dst = await demo.readDemo(dstRange);
+  assert.equal(dst.concurrency.length,23);
+  const longDst = { ...dstRange, start: '2026-03-07T06:00:00.000Z' };
+  const dailyDst = await demo.readDemo(longDst);
+  assert.equal(dailyDst.concurrency.length,2);
+  assert.deepEqual(dailyDst.concurrency.map(point => calendarDate(point.at,longDst.timezone)),['2026-03-07','2026-03-08']);
+  const utc = await demo.readDemo({ ...longDst, timezone: 'UTC' });
+  assert.equal(utc.concurrency.length,3);
+  assert.deepEqual(utc.concurrency.map(point => calendarDate(point.at,'UTC')),['2026-03-07','2026-03-08','2026-03-09']);
+  await demo.seed(new Date('2025-11-03T06:00:00.000Z'));
+  const fall = await demo.readDemo({ start: '2025-11-02T05:00:00.000Z', end: '2025-11-03T06:00:00.000Z', timezone: 'America/Chicago' });
+  assert.equal(fall.concurrency.length,25);
+  assert(fall.concurrency.every(point => calendarDate(point.at,'America/Chicago') === '2025-11-02'));
 });
