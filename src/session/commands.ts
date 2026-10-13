@@ -1,5 +1,5 @@
 import { SessionError, protocolVersion } from './contracts';
-import type { Authorization, Principal, Replay, Result, SessionMode } from './contracts';
+import type { Authorization, Principal, Replay, Result, SessionMode, StartReference } from './contracts';
 import type { SessionService } from './service';
 
 export type CommandLimits = { maxTranscriptChars: number };
@@ -7,6 +7,7 @@ type Base<T extends string> = { protocolVersion: 1; type: T; commandId: string }
 type InSession<T extends string> = Base<T> & { sessionId: string };
 export type SessionCommand =
   | Base<'session.start'> & { mode: SessionMode; kind: 'paid' | 'trial' }
+  | Base<'session.lookup_start'> & { startCommandId: string }
   | InSession<'session.confirm'> & { revision: number; mode: SessionMode }
   | InSession<'session.cancel_preparation'>
   | InSession<'session.reconnect'> & { expectedConnectionId: string }
@@ -56,6 +57,10 @@ export function decodeCommand(raw: unknown, limits: CommandLimits): SessionComma
     if (data.kind !== 'paid' && data.kind !== 'trial') throw new SessionError('invalid_input');
     return { protocolVersion, type: data.type, commandId, mode: decodeMode(data.mode), kind: data.kind };
   }
+  if (data.type === 'session.lookup_start') {
+    fields(data, [...base, 'startCommandId']);
+    return { protocolVersion, type: data.type, commandId, startCommandId: identifier(data.startCommandId) };
+  }
   const sessionId = identifier(data.sessionId), required = [...base, 'sessionId'];
   const envelope = { protocolVersion, commandId, sessionId };
   switch (data.type) {
@@ -81,7 +86,7 @@ export function decodeCommand(raw: unknown, limits: CommandLimits): SessionComma
   }
 }
 
-type CommandValue = { type: 'result'; value: Result } | { type: 'snapshot'; value: Replay };
+type CommandValue = { type: 'result'; value: Result } | { type: 'snapshot'; value: Replay } | { type: 'start_reference'; value: StartReference };
 export type CommandResponse = CommandValue & { commandId: string };
 /** Correlation wraps only validated commands; the error boundary never reflects malformed input. */
 export class CommandFailure extends Error {
@@ -95,6 +100,7 @@ export async function dispatchCommand(service: SessionService, principal: Princi
 }
 async function executeCommand(service: SessionService, principal: Principal, command: SessionCommand): Promise<CommandValue> {
   switch (command.type) {
+    case 'session.lookup_start': return { type: 'start_reference', value: await service.lookupStart(principal, command.startCommandId) };
     case 'session.start': return { type: 'result', value: await service.start(principal, command.commandId, command.mode, command.kind) };
     case 'session.confirm': return { type: 'result', value: await service.confirm(principal, command.sessionId, command.commandId, command.revision, command.mode) };
     case 'session.cancel_preparation': return { type: 'result', value: await service.cancelPreparation(principal, command.sessionId, command.commandId) };

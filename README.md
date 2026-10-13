@@ -40,7 +40,7 @@ npm run dev
 
 Session routes require a Bearer header. Missing identity gives401; supplying a credential while the identity adapter is unconfigured gives503. There is no built-in development password/login/token and no automatic test-account creation. Identity, inference and voice adapters remain unavailable until connected. Session/account/controller identity comes from the verifier, never command fields or query tokens. Test fixtures inject synthetic identities solely into isolated tests.
 
-Commands include Start, Confirm, preparation Cancel, Reconnect, Snapshot, committed Utterance, targeted response Cancel and End. Readiness, credit grants, revocation, recovery and media publication remain trusted internal operations. Unknown/malformed fields, altered retries, unowned sessions and stale controllers are rejected. HTTP/WS input is bounded; WebSocket commands are serialized per connection and identity is rechecked for every command.
+Commands include Start, read-only Start lookup, Confirm, preparation Cancel, Reconnect, Snapshot, committed Utterance, targeted response Cancel and End. Lookup recovers an existing verified account/client's session ID after a lost first reply; explicit Reconnect still grants controller authority. Readiness, credit grants, revocation, coordinator recovery and media publication remain trusted internal operations. Unknown/malformed fields, altered retries, unowned sessions and stale controllers are rejected. HTTP/WS input is bounded; WebSocket commands are serialized per connection and identity is rechecked for every command.
 
 ## Session foundation
 

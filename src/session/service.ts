@@ -4,7 +4,7 @@ import { normalizeSpeech } from '../protocol/therapist';
 import type { SpeechSegment } from '../protocol/therapist';
 import { protocolVersion, SessionError } from './contracts';
 import type { Authorization, DatabaseState, Principal, Readiness, Replay, Result, ResultCode,
-  SessionEvent, SessionMode, SessionStore, Snapshot, StoredSession, TestPolicy, TransactionScope } from './contracts';
+  SessionEvent, SessionMode, SessionStore, Snapshot, StartReference, StoredSession, TestPolicy, TransactionScope } from './contracts';
 
 function id(value: string) {
   if (typeof value !== 'string' || !value.trim() || value.length > 128) throw new SessionError('invalid_input');
@@ -16,6 +16,9 @@ function canonical(value: unknown): string {
   return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(',')}}`;
 }
 function fingerprint(value: unknown) { return createHash('sha256').update(canonical(value)).digest('hex'); }
+function commandKey(p: Principal, operation: string, sessionId: string | null, commandId: string) {
+  return JSON.stringify([p.accountId, p.clientId, operation, sessionId, commandId]);
+}
 function validateMode(mode: SessionMode) {
   if (!mode || !['text', 'voice'].includes(mode.input) || !['visible', 'hidden'].includes(mode.visual)) throw new SessionError('invalid_input');
 }
@@ -100,7 +103,7 @@ export class SessionService {
   private command(state: DatabaseState, p: Principal, operation: string, commandId: string, payload: unknown,
     session: StoredSession | null, apply: () => Result): Result {
     id(commandId);
-    const key = JSON.stringify([p.accountId, p.clientId, operation, session?.snapshot.sessionId ?? null, commandId]);
+    const key = commandKey(p, operation, session?.snapshot.sessionId ?? null, commandId);
     const hash = fingerprint(payload), previous = state.commands.get(key);
     if (previous) {
       if (previous.fingerprint !== hash) throw new SessionError('idempotency_conflict');
@@ -123,6 +126,17 @@ export class SessionService {
   }
   private result(session: StoredSession, outcome: ResultCode, authorization?: Authorization): Result {
     return { outcome, snapshot: session.snapshot, ...(authorization ? { authorization } : {}) };
+  }
+  /** Discover only an existing Start for this verified account/client; never reveal the current binding. */
+  async lookupStart(p: Principal, startCommandId: string): Promise<StartReference> {
+    this.principal(p); id(startCommandId);
+    return this.transaction({ accountId: p.accountId }, state => {
+      if (!state.accounts.get(p.accountId)?.allowed) throw new SessionError('no_access');
+      const record = state.commands.get(commandKey(p, 'start', null, startCommandId));
+      const session = record ? state.sessions.get(record.sessionId) : undefined;
+      if (!session || session.accountId !== p.accountId || session.snapshot.controller.clientId !== p.clientId) throw new SessionError('not_found');
+      return { protocolVersion, sessionId: session.snapshot.sessionId };
+    });
   }
   /** Explicit synthetic grant, not a purchase/refill endpoint. Refuses replacement of an existing account. */
   async seedTestAccount(accountId: string, credits: number) {

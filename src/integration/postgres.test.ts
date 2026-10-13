@@ -280,6 +280,44 @@ test('committed PostgreSQL activation survives an actual worker SIGKILL and is n
   assert.equal(retry.snapshot.sessionId, state.sessionId); assert.equal(retry.snapshot.accounting, 'consumed');
   assert.deepEqual((await f.serviceB.testLedger(actor.accountId)).map(x => x.effect), ['reserved', 'consumed']);
 });
+test('lost Start reply survives actual SIGKILL and is discovered over HTTP before fresh-controller activation', { timeout: 15_000 }, async t => {
+  const f = await fixture(t);
+  const child = fork(join(__dirname, 'postgres-child.js'), [], { env: { ...process.env, DATABASE_URL: connectionString, TEST_SCHEMA: f.schemaName, TEST_START_ONLY: '1' }, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const [raw] = await once(child, 'message', { signal: AbortSignal.timeout(10_000) }); assert.equal(raw.error, undefined);
+  const result = raw as Result, exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+  assert.equal(child.signalCode, 'SIGKILL');
+  const fresh = { accountId: 'synthetic-crash-account', clientId: 'synthetic-client', connectionId: 'synthetic-fresh-connection' };
+  const app = await createServer({ service: f.serviceB, database: createDatabaseProbe(), identity: { async verify(header) {
+    assert.equal(header, 'Bearer synthetic-test-token'); return { ...fresh };
+  } } }); f.cleanup(() => app.close());
+  const address = await app.listen({ port: 0, host: '127.0.0.1' });
+  const response = await fetch(`${address}/v1/session/commands`, { method: 'POST', headers: { authorization: 'Bearer synthetic-test-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ protocolVersion: 1, type: 'session.lookup_start', commandId: 'discover', startCommandId: 'synthetic-start' }) });
+  assert.equal(response.status, 200); const reference = await response.json();
+  assert.deepEqual(reference.value, { protocolVersion: 1, sessionId: result.snapshot.sessionId });
+  await assert.rejects(f.serviceA.snapshot(fresh, reference.value.sessionId), errorCode('controller_conflict'));
+  const before = await f.admin.query(`SELECT snapshot FROM ${f.schema}.sessions WHERE session_id=$1`, [reference.value.sessionId]);
+  assert.equal(before.rows[0].snapshot.startedAt, null); assert.equal(before.rows[0].snapshot.controller.connectionId, 'synthetic-connection');
+  await f.serviceB.reconnect(fresh, reference.value.sessionId, 'recover', 'synthetic-connection');
+  const ready = await f.serviceB.ready(fresh, reference.value.sessionId, readiness);
+  const admitted = await f.serviceA.confirm(fresh, reference.value.sessionId, 'confirm', ready.snapshot.sessionRevision, mode);
+  const retry = await f.serviceB.start(fresh, 'synthetic-start', mode);
+  assert.equal(retry.snapshot.endsAt, admitted.snapshot.endsAt);
+  assert.deepEqual((await f.serviceB.testLedger(fresh.accountId)).map(entry => entry.effect), ['reserved', 'consumed']);
+});
+test('real PostgreSQL discovery has account/client scope and creates no new command or accounting row', async t => {
+  const f = await fixture(t), { sessionId } = await active(f), fresh = { ...principal, connectionId: 'fresh' };
+  const rowsBefore = (await f.admin.query(`SELECT (SELECT COUNT(*) FROM ${f.schema}.commands) AS commands,(SELECT COUNT(*) FROM ${f.schema}.ledger) AS ledger`)).rows[0];
+  assert.deepEqual(await f.serviceB.lookupStart(fresh, 'start'), { protocolVersion: 1, sessionId });
+  await f.serviceA.seedTestAccount('synthetic-other-account', 1);
+  for (const actor of [{ ...fresh, accountId: 'synthetic-other-account' }, { ...fresh, clientId: 'wrong-client' }]) {
+    await assert.rejects(f.serviceB.lookupStart(actor, 'start'), errorCode('not_found'));
+    await assert.rejects(f.serviceB.lookupStart(actor, 'missing'), errorCode('not_found'));
+  }
+  const rowsAfter = (await f.admin.query(`SELECT (SELECT COUNT(*) FROM ${f.schema}.commands) AS commands,(SELECT COUNT(*) FROM ${f.schema}.ledger) AS ledger`)).rows[0];
+  assert.deepEqual(rowsAfter, rowsBefore);
+});
 
 test('real PostgreSQL account locks permit unrelated accounts to progress independently', { timeout: 10_000 }, async t => {
   const f = await fixture(t), second = { ...principal, accountId: 'synthetic-independent-account' };

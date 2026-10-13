@@ -101,3 +101,14 @@ test('malformed verifier results cannot authorize HTTP commands or WebSocket han
   }
   assert.equal((await service.testBalance(principal.accountId)).credits, 1);
 });
+test('HTTP Start lookup is correlated and reveals only the existing verified-client session ID', async t => {
+  const { app, service } = await fixture(); t.after(() => app.close());
+  const started = await app.inject({ method: 'POST', url: '/v1/session/commands', headers, payload: start });
+  const sessionId = started.json().value.snapshot.sessionId;
+  const lookup = { protocolVersion: 1, type: 'session.lookup_start', commandId: 'discover', startCommandId: start.commandId };
+  const recovered = await app.inject({ method: 'POST', url: '/v1/session/commands', headers, payload: lookup });
+  assert.equal(recovered.statusCode, 200);
+  assert.deepEqual(recovered.json(), { ok: true, profile: 'internal-test-v1', commandId: 'discover', type: 'start_reference', value: { protocolVersion: 1, sessionId } });
+  assert.equal((await app.inject({ method: 'POST', url: '/v1/session/commands', headers, payload: { ...lookup, accountId: 'forged' } })).statusCode, 400);
+  assert.equal((await service.testBalance(principal.accountId)).credits, 0);
+});

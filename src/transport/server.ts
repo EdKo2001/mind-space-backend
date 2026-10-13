@@ -105,7 +105,7 @@ export async function createServer(options: ServerOptions) {
           // Revalidate each command, including identity expiration/revocation after the handshake.
           const principal = await verify();
           const value = await dispatchCommand(options.service, principal, raw);
-          if (send({ ok: true, profile: 'internal-test-v1', ...value })) live?.bind(value.value.snapshot);
+          if (send({ ok: true, profile: 'internal-test-v1', ...value }) && 'snapshot' in value.value) live?.bind(value.value.snapshot);
         } catch (error) {
           const response = errorResult(error);
           if (socket.readyState === 1) {

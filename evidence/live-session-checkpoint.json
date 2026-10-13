@@ -1,21 +1,22 @@
 {
-  "checkedAt": "2026-10-13T20:51:58.198Z",
+  "checkedAt": "2026-10-13T21:07:52.205Z",
   "profile": "internal-test-v1",
   "validation": {
     "check": "PASS",
     "unitAndTransport": {
-      "passed": 58,
+      "passed": 65,
       "failed": 0,
       "skipped": 0
     },
     "realPostgres": {
-      "passed": 24,
+      "passed": 26,
       "failed": 0,
       "skipped": 0
     },
     "httpSmoke": "PASS",
     "liveDashboardAdapter": "PASS",
-    "authorityRegressions": "PASS: malformed verifier/scope, stale-controller retry, current older-revision speech, superseded generation and local stop"
+    "authorityRegressions": "PASS: malformed verifier/scope, stale-controller retry, current older-revision speech, superseded generation and local stop",
+    "lostStartReplyRecovery": "PASS: actual worker SIGKILL, HTTP discovery, explicit rebind/activation and one debit"
   },
   "runtime": {
     "healthStatus": 200,
@@ -40,6 +41,10 @@
       "runtimeAccounts": 0,
       "testSchemasRemaining": 0,
       "listenerConnections": 1
+    },
+    "startLookupAccess": {
+      "missingIdentity": 401,
+      "unconfiguredIdentity": 503
     }
   },
   "claims": {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { decodeCommand, dispatchCommand } from '../session/commands';
-import { decodeEvent, decodeSnapshot } from '../session/wire';
+import { decodeEvent, decodeSnapshot, decodeStartReference } from '../session/wire';
 import { SessionError } from '../session/contracts';
 import { MemorySessionStore } from '../session/memory-store';
 import { SessionService } from '../session/service';
@@ -20,9 +20,21 @@ const commands = [
   { ...envelope, type: 'session.utterance', utteranceId: 'synthetic-utterance', transcript: 'Synthetic input' },
   { ...envelope, type: 'response.cancel', target: { generation: 1, responseId: 'synthetic-response', utteranceId: 'synthetic-utterance' } },
   { ...envelope, type: 'session.end' },
+  { ...base, type: 'session.lookup_start', startCommandId: 'original-start' },
 ];
 for (const command of commands) test(`command wire roundtrip: ${command.type}`, () => {
   assert.deepEqual(decodeCommand(JSON.parse(JSON.stringify(command)), limits), command);
+});
+test('Start discovery wire accepts only a bounded request and minimal reference', () => {
+  const lookup = { ...base, type: 'session.lookup_start', startCommandId: 'original-start' };
+  for (const extra of [{ accountId: 'forged' }, { clientId: 'forged' }, { sessionId: 'claimed' }, { expectedConnectionId: 'claimed' }, { startCommandId: ' ' }]) {
+    assert.throws(() => decodeCommand({ ...lookup, ...extra }, limits), invalid);
+  }
+  assert.deepEqual(decodeStartReference({ protocolVersion: 1, sessionId: 'owned' }), { protocolVersion: 1, sessionId: 'owned' });
+  for (const reference of [{ protocolVersion: 2, sessionId: 'owned' }, { protocolVersion: 1, sessionId: '' },
+    { protocolVersion: 1, sessionId: 'owned', controller: {} }, { protocolVersion: 1, sessionId: 'owned', authorization: {} }]) {
+    assert.throws(() => decodeStartReference(reference), invalid);
+  }
 });
 test('command decoder excludes client/account identity and internal readiness/media/credit operations', () => {
   for (const raw of [

@@ -8,6 +8,10 @@ async function main() {
   const principal = { accountId: 'synthetic-crash-account', clientId: 'synthetic-client', connectionId: 'synthetic-connection' };
   await service.seedTestAccount(principal.accountId, 1);
   const started = await service.start(principal, 'synthetic-start', { input: 'text', visual: 'hidden' });
+  if (process.env.TEST_START_ONLY === '1') {
+    process.send?.(started);
+    await new Promise(() => {}); return;
+  }
   const ready = await service.ready(principal, started.snapshot.sessionId, { inputReady: true, outputReady: true, providerReady: true, avatarReady: false });
   const admitted = await service.confirm(principal, started.snapshot.sessionId, 'synthetic-confirm', ready.snapshot.sessionRevision, { input: 'text', visual: 'hidden' });
   process.send?.(admitted);

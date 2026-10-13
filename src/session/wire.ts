@@ -1,9 +1,14 @@
 import { normalizeSpeech } from '../protocol/therapist';
 import { SessionError, protocolVersion } from './contracts';
-import type { Lifecycle, SessionEvent, Snapshot } from './contracts';
+import type { Lifecycle, SessionEvent, Snapshot, StartReference } from './contracts';
 import { decodeAuthorization, decodeMode, fields, identifier, integer, object } from './commands';
 
 function nullableTime(value: unknown) { return value === null ? null : integer(value); }
+export function decodeStartReference(raw: unknown): StartReference {
+  const data = object(raw); fields(data, ['protocolVersion', 'sessionId']);
+  if (data.protocolVersion !== protocolVersion) throw new SessionError('invalid_input');
+  return { protocolVersion, sessionId: identifier(data.sessionId) };
+}
 export function decodeSnapshot(raw: unknown): Snapshot {
   const data = object(raw);
   fields(data, ['protocolVersion', 'sessionId', 'sessionRevision', 'sequence', 'lifecycle', 'mode', 'generation', 'authorization',

@@ -54,6 +54,8 @@ export interface SessionStore {
 }
 export type Readiness = { inputReady: boolean; outputReady: boolean; providerReady: boolean; avatarReady: boolean };
 export type Replay = { snapshot: Snapshot; events: SessionEvent[]; requiresSnapshot: boolean };
+/** Read-only discovery after a lost Start reply; this does not confer controller or response authority. */
+export type StartReference = { protocolVersion: typeof protocolVersion; sessionId: string };
 
 export interface DialogueAdapter {
   generate(input: { sessionId: string; authorization: Authorization; text: string; signal: AbortSignal }): Promise<unknown>;

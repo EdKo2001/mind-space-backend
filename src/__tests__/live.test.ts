@@ -16,9 +16,9 @@ import { ClientPlaybackGuard } from '../session/playback-guard';
 const principal = { accountId: 'synthetic-live-user', clientId: 'synthetic-client', connectionId: 'synthetic-connection' };
 const mode = { input: 'text' as const, visual: 'hidden' as const };
 const readiness = { inputReady: true, outputReady: true, providerReady: true, avatarReady: false };
-async function fixture(t: TestContext, interval = 10_000, history = 2) {
+async function fixture(t: TestContext, interval = 10_000, history = 2, connection: Principal = principal) {
   let valid = true;
-  let verifiedIdentity: unknown = { ...principal };
+  let verifiedIdentity: unknown = { ...connection };
   const store = new MemorySessionStore(), service = new SessionService(store, { profile: 'internal-test-v1', timing: 'absolute-deadline',
     reservationMs: 60_000, readinessMs: 10_000, maxActiveSessions: 1, maxEventsPerSession: history, maxUtteranceChars: 2000 });
   await service.seedTestAccount(principal.accountId, 2);
@@ -37,9 +37,11 @@ async function fixture(t: TestContext, interval = 10_000, history = 2) {
   socket.on('error', () => {});
   t.after(async () => { socket.terminate(); await app.close(); });
   await once(socket, 'open', { signal: AbortSignal.timeout(2000) });
-  const snapshot = once(socket, 'message', { signal: AbortSignal.timeout(2000) });
-  socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.snapshot', commandId: 'snapshot', sessionId }));
-  await snapshot;
+  if (connection.connectionId === principal.connectionId) {
+    const snapshot = once(socket, 'message', { signal: AbortSignal.timeout(2000) });
+    socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.snapshot', commandId: 'snapshot', sessionId }));
+    await snapshot;
+  }
   return { app, socket, service, store, wakeups, sessionId, revoke: () => { valid = false; }, setIdentity: (value: unknown) => { verifiedIdentity = value; } };
 }
 async function message(socket: WebSocket) { const [bytes] = await once(socket, 'message', { signal: AbortSignal.timeout(2000) }); return JSON.parse(bytes.toString()); }
@@ -128,4 +130,21 @@ test('malformed reverified identity fails closed before live state delivery', { 
   const f = await fixture(t); f.setIdentity({ ...principal, connectionId: undefined });
   const received = message(f.socket), closed = once(f.socket, 'close'); f.wakeups.wake();
   assert.deepEqual(await received, { ok: false, error: 'identity_unavailable' }); await closed;
+});
+test('real fresh WebSocket Start lookup does not subscribe or grant control before explicit reconnect', { timeout: 5000 }, async t => {
+  const fresh = { ...principal, connectionId: 'fresh-connection' }, f = await fixture(t, 10_000, 8, fresh);
+  const lookup = message(f.socket);
+  f.socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.lookup_start', commandId: 'discover', startCommandId: 'start' }));
+  assert.deepEqual(await lookup, { ok: true, profile: 'internal-test-v1', commandId: 'discover', type: 'start_reference', value: { protocolVersion: 1, sessionId: f.sessionId } });
+  let pushes = 0; const count = () => { pushes++; }; f.socket.on('message', count);
+  await f.service.commitUtterance(principal, f.sessionId, 'input', 'utterance', 'Synthetic content');
+  f.wakeups.wake(); await delay(30); assert.equal(pushes, 0); f.socket.removeListener('message', count);
+  const denied = message(f.socket);
+  f.socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.snapshot', commandId: 'not-controller', sessionId: f.sessionId }));
+  assert.deepEqual(await denied, { ok: false, error: 'controller_conflict', commandId: 'not-controller' });
+  const rebound = message(f.socket);
+  f.socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.reconnect', commandId: 'recover', sessionId: f.sessionId, expectedConnectionId: principal.connectionId }));
+  assert.equal((await rebound).value.snapshot.controller.connectionId, fresh.connectionId);
+  await f.service.end(fresh, f.sessionId, 'end');
+  const terminal = message(f.socket); f.wakeups.wake(); assert.equal((await terminal).value.snapshot.lifecycle, 'ended');
 });

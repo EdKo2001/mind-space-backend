@@ -144,6 +144,42 @@ test('superseded controllers cannot recover state through old Start or Reconnect
   assert.equal((await f.service.start(third, 'start', mode)).snapshot.endsAt, f.admitted.snapshot.endsAt);
   assert.deepEqual((await f.service.testLedger(principal.accountId)).map(entry => entry.effect), ['reserved', 'consumed']);
 });
+test('lost Start reply is discovered without control, then explicitly rebound without duplicate accounting', async () => {
+  const f = await fixture(), fresh = { ...principal, connectionId: 'fresh-connection' };
+  assert.deepEqual(await f.service.lookupStart(fresh, 'start'), { protocolVersion: 1, sessionId: f.sessionId });
+  await assert.rejects(f.service.start(fresh, 'start', mode), code('controller_conflict'));
+  await assert.rejects(f.service.snapshot(fresh, f.sessionId), code('controller_conflict'));
+  assert.equal((await f.service.snapshot(principal, f.sessionId)).snapshot.controller.connectionId, principal.connectionId);
+  assert.equal((await f.service.testBalance(principal.accountId)).credits, 1);
+  await f.service.reconnect(fresh, f.sessionId, 'recover-binding', principal.connectionId);
+  const ready = await f.service.ready(fresh, f.sessionId, readiness);
+  const admitted = await f.service.confirm(fresh, f.sessionId, 'confirm', ready.snapshot.sessionRevision, mode);
+  assert.equal((await f.service.start(fresh, 'start', mode)).snapshot.endsAt, admitted.snapshot.endsAt);
+  assert.deepEqual((await f.service.testLedger(principal.accountId)).map(entry => entry.effect), ['reserved', 'consumed']);
+  await assert.rejects(f.service.snapshot(principal, f.sessionId), code('controller_conflict'));
+  assert.deepEqual(await f.service.lookupStart(principal, 'start'), { protocolVersion: 1, sessionId: f.sessionId });
+  await assert.rejects(f.service.reconnect(principal, f.sessionId, 'old-claim', principal.connectionId), code('controller_conflict'));
+});
+test('Start lookup is scoped to verified account/client and cannot disclose current authorization or binding', async () => {
+  const f = await active(); await response(f);
+  await f.service.seedTestAccount('synthetic-other', 1);
+  for (const other of [{ ...principal, accountId: 'synthetic-other' }, { ...principal, clientId: 'different-client' }]) {
+    await assert.rejects(f.service.lookupStart(other, 'start'), code('not_found'));
+    await assert.rejects(f.service.lookupStart(other, 'missing'), code('not_found'));
+  }
+  assert.deepEqual(Object.keys(await f.service.lookupStart({ ...principal, connectionId: 'fresh' }, 'start')).sort(), ['protocolVersion', 'sessionId']);
+  await f.service.revokeTestAccount(principal.accountId);
+  await assert.rejects(f.service.lookupStart(principal, 'start'), code('no_access'));
+});
+test('Start discovery reconciles an expired reservation without restarting it or charging', async () => {
+  const f = await fixture(), fresh = { ...principal, connectionId: 'fresh' };
+  f.advance(policy.reservationMs);
+  const reference = await f.service.lookupStart(fresh, 'start'); assert.equal(reference.sessionId, f.sessionId);
+  const state = (await f.service.snapshot(principal, f.sessionId)).snapshot;
+  assert.equal(state.lifecycle, 'expired'); assert.equal(state.startedAt, null);
+  assert.equal((await f.service.testBalance(principal.accountId)).credits, 2);
+  assert.deepEqual((await f.service.testLedger(principal.accountId)).map(entry => entry.effect), ['reserved', 'released']);
+});
 test('unowned or nonexistent sessions have the same error and isolated test balance', async () => {
   const f = await active(); const stranger = { ...principal, accountId: 'stranger' };
   await assert.rejects(f.service.snapshot(stranger, f.sessionId), code('not_found'));
