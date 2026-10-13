@@ -345,3 +345,7 @@ The internal milestone can proceed after its narrower prerequisites above are re
 - [Provisional accounting and privacy policies](PRODUCT_POLICY_DRAFT.md)
 - [Local session event and playback design](MOCK_THERAPIST.md)
 - [Supplied training and voice proposal](references/training-and-voice-plan/2026-10-12/MindSpace-training-and-voice-plan.md) — reference material, not provider selection.
+
+## Database demo test boundary
+
+User-authorized October13 dashboard test: isolated synthetic reporting rows in `mindspace_dashboard_demo` → parameterized SQL read → explicitly enabled `/v1/dashboard/demo` → existing dashboard HTTP adapter → visibly labeled DB DEMO UI. Seed/write is an explicit local command; GET is read-only. This does not alter authoritative session/account storage or connect provider services. See docs/dashboard-api.md.

@@ -8,13 +8,13 @@ This version-1 contract matches the separate dashboard's `src/data/client.ts` ad
 
 Compose explicitly enables `DASHBOARD_LOCAL_AGGREGATES=1` and publishes port3001 on loopback. The default npm server has dashboard access disabled. For npm, configure PostgreSQL and enable that flag explicitly; preserve loopback binding. Allowed browser origins are `http://127.0.0.1:5173` and `http://localhost:5173` in Compose, with exact origin matching. Responses use `Cache-Control: no-store`. This is a redacted local-development endpoint, not a production administrator authentication mechanism. Session command authentication remains required and unavailable until the identity adapter is configured.
 
-When the dashboard is connected later, its existing adapter accepts:
+For the operational aggregate endpoint, the existing dashboard adapter accepts:
 
 ```dotenv
 VITE_DASHBOARD_API_URL=http://127.0.0.1:3001/v1/dashboard
 ```
 
-No tokens belong in this variable. No frontend files were changed to enable it during this backend checkpoint.
+No tokens belong in this variable. The separate demo preview below now connects the dashboard; ordinary frontend development still defaults to local fixtures.
 
 The frontend resolves Today, 7/30/90/360-day and custom ranges to UTC instants using the selected timezone. The API echoes those exact instants, without resolving local midnight/DST again. Range membership is `[start,end)`. Instants must be canonical UTC ISO strings with milliseconds; the range is positive and bounded to367 elapsed days to allow366 calendar days across DST. The end may be at most60 seconds ahead of server time for clock skew. Future data is never projected. Unknown query keys, duplicate parameters, invalid dates/zones and query credentials return400.
 
@@ -70,4 +70,23 @@ Optionally verify through the actual separate dashboard adapter, without changin
 npm run smoke:dashboard -- --client=/absolute/path/to/mindspace-dashboard/src/data/client.ts
 ```
 
-The live check records redacted evidence in `evidence/dashboard-smoke.json`. It exercises real HTTP, exact requested-range echo, allowed/denied origin behavior, malformed query rejection, durable-store availability and optional frontend parsing. PostgreSQL integration tests use isolated disposable fixture schemas and verify shared state, completion boundaries, units, unknown values, migration continuity and process-kill durability. Frontend wiring, production admin identity, provider metrics and native playback remain pending.
+The live check records redacted evidence in `evidence/dashboard-smoke.json`. It exercises real HTTP, exact requested-range echo, allowed/denied origin behavior, malformed query rejection, durable-store availability and optional frontend parsing. PostgreSQL integration tests use isolated disposable fixture schemas and verify shared state, completion boundaries, units, unknown values, migration continuity and process-kill durability. Production admin identity, provider metrics and native playback remain pending. The separate synthetic database preview is wired as documented below.
+
+## Seeded PostgreSQL dashboard test
+
+October13 user request authorizes synthetic data in the database and actual dashboard fetching/display. Compose explicitly enables `DASHBOARD_DEMO=1`; npm mode keeps it disabled unless that flag and local aggregates/database are configured. `GET /v1/dashboard/demo` is separate from the existing truthful aggregate endpoint. It uses the same range validation, exact loopback CORS allowlist and no-store behavior. Demo preview origins on port5175 are allowed alongside port5173.
+
+```bash
+docker compose up --build -d
+docker compose exec -T api node dist/dashboard/seed-demo.js
+# In the standalone mindspace-dashboard checkout:
+npm run dev:db-demo
+```
+
+Open http://127.0.0.1:5175. The frontend requests `/v1/dashboard/demo` and shows DB DEMO plus a synthetic-data disclosure. The response carries `synthetic:true`, `profile:db-demo-v1`, `scope:synthetic-demo`; the adapter retains that distinction. No credential is needed for this loopback test.
+
+The explicit seed command transactionally upserts 66 DEMO-prefixed session rows (60 completed,6 frozen current rows) and721 hourly chart samples across30 days in `mindspace_dashboard_demo`. Reruns refresh timestamps without duplicates. It never seeds identities, credits, accounts or sessions into `mindspace_backend`; existing migrations are unchanged. All seeded latency, answers, failures and spend are invented test values. The fixture clock does not advance remaining time.
+
+Completed count, mean duration/answers, fixture latency p95, failure ratio and summed illustrative spend are SQL aggregates over completions in `[start,end)`. Current connection counts/rows ignore the reporting range; chart samples are filtered by requested instants. Missing history stays empty; no synthetic points are generated at request time. A range with no completed fixtures has count0 and null averages/cost/rate. Comparisons, capacity, inference queues and forecast remain unavailable. API/database health is based on a successful read; real AI and voice health stays Unknown. No real messages, audio, names, credentials or billing actions are stored.
+
+Real PostgreSQL integration tests verify idempotent seeding, HTTP/CORS, range membership, empty history, SQL changes appearing in subsequent HTTP responses, and isolation from the operational endpoint.

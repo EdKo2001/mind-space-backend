@@ -1,3 +1,4 @@
+import { DashboardDemo } from './dashboard/demo';
 import { MemorySessionStore } from './session/memory-store';
 import { SessionService } from './session/service';
 import { startMaintenance } from './database/maintenance';
@@ -21,13 +22,17 @@ async function main() {
   // No accounts are seeded, identity/provider adapters are unavailable by default.
   const localDashboard = process.env.DASHBOARD_LOCAL_AGGREGATES;
   if (localDashboard && localDashboard !== '1') { await storage?.close(); throw new Error('Invalid dashboard mode'); }
+  const demoMode = process.env.DASHBOARD_DEMO;
+  if (demoMode && (demoMode !== '1' || localDashboard !== '1' || !storage)) { await storage?.close(); throw new Error('Invalid demo configuration'); }
+  const demo = demoMode === '1' ? DashboardDemo.connect(process.env.DATABASE_URL!) : undefined;
   const database = createDatabaseProbe(process.env.DATABASE_URL);
   const wakeups = new SessionWakeups();
   const app = await createServer({ service, database, storage,
     live: storage ? { wakeups } : undefined,
-    dashboard: localDashboard === '1' && storage ? { reader: storage, localAggregates: true,
+    dashboard: localDashboard === '1' && storage ? { reader: storage, localAggregates: true, demo,
       allowedOrigins: (process.env.DASHBOARD_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean) } : undefined,
-  }).catch(async error => { await database.close(); await storage?.close(); throw error; });
+  }).catch(async error => { await database.close(); await storage?.close(); await demo?.close(); throw error; });
+  app.addHook('onClose', async () => { await demo?.close(); });
   let maintenance: ReturnType<typeof startMaintenance> | undefined;
   let events: Awaited<ReturnType<typeof startDatabaseEvents>> | undefined;
   app.addHook('preClose', async () => { await maintenance?.stop(); await events?.stop(); });

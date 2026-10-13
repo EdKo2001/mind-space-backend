@@ -65,6 +65,10 @@ Publishing speech checks metadata, order and authorization; it does not establis
 
 The internal profile uses explicit synthetic credits and an absolute deadline. This is not approval of paid disconnect/pause/outage/compensation rules or production one-time trial eligibility. PostgreSQL retains operational IDs/fingerprints and state metadata; real-user identity/providers remain unconfigured. Content retention/consent and production admin access still need decisions.
 
-Next: dashboard frontend wiring, verified user/admin identity, measured connection presence/history, provider adapters and app playback acknowledgments, output validation/media alignment, then the existing mobile coordinator. Provider URLs/credentials, retention, billing, appointments, notes/history and production policy remain unconfigured. Transport/database tests are distinct from native speech/performance acceptance.
+Next: verified user/admin identity, measured connection presence/history, provider adapters and app playback acknowledgments, output validation/media alignment, then the existing mobile coordinator. Provider URLs/credentials, retention, billing, appointments, notes/history and production policy remain unconfigured. Transport/database tests are distinct from native speech/performance acceptance.
 
 Evidence and current status: [CURRENT_ACCEPTANCE_LEDGER.md](CURRENT_ACCEPTANCE_LEDGER.md). Architectural workflow: [ARCHITECTURE.md](ARCHITECTURE.md). Historical pre-extraction notes remain labeled in `references/initial-foundation-notes.md`.
+
+## PostgreSQL demo preview
+
+The user-authorized DB demo is separate from operational aggregates. Run `docker compose exec -T api node dist/dashboard/seed-demo.js` after Compose starts, then `npm run dev:db-demo` in the standalone dashboard. Open http://127.0.0.1:5175. Data is fetched from PostgreSQL via `/v1/dashboard/demo` and visibly labeled synthetic. See [dashboard API](docs/dashboard-api.md) for units, isolation and rerun behavior. The demo schema persists in the existing volume; provider endpoints remain deferred.

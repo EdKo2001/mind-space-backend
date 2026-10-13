@@ -52,3 +52,11 @@ test('dashboard accepts explicit UTC instants across DST without reinterpreting 
     { ...range, start: new Date(Date.parse(end) - 368 * 86400_000).toISOString() },
   ]) assert.throws(() => decodeDashboardRange(bad), /invalid_input/);
 });
+
+test('demo endpoint requires explicit configuration even when local aggregates are enabled', async t => {
+  const closed = await fixture(); t.after(() => closed.close());
+  assert.equal((await closed.inject(url.replace('/v1/dashboard?', '/v1/dashboard/demo?'))).statusCode, 503);
+  const app = await fixture({ async readDashboard() { return totals; } }); t.after(() => app.close());
+  const response = await app.inject(url.replace('/v1/dashboard?', '/v1/dashboard/demo?'));
+  assert.equal(response.statusCode, 503); assert.equal(response.json().error, 'dashboard_demo_unconfigured');
+});

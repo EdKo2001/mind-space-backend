@@ -19,7 +19,9 @@
     "sync:contract": "node scripts/sync-mobile-contract.cjs",
     "start": "node --env-file-if-exists=.env dist/main.js",
     "dev": "npm run build && npm start",
-    "test:postgres": "npm run build && node --test dist/integration/postgres.test.js"
+    "test:postgres": "npm run build && node --test dist/integration/*.test.js",
+    "seed:dashboard": "npm run build && node --env-file-if-exists=.env dist/dashboard/seed-demo.js",
+    "smoke:dashboard-demo": "node scripts/dashboard-demo-smoke.cjs"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
