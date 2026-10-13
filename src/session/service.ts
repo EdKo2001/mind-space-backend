@@ -4,7 +4,7 @@ import { normalizeSpeech } from '../protocol/therapist';
 import type { SpeechSegment } from '../protocol/therapist';
 import { protocolVersion, SessionError } from './contracts';
 import type { Authorization, DatabaseState, Principal, Readiness, Replay, Result, ResultCode,
-  SessionEvent, SessionMode, SessionStore, Snapshot, StoredSession, TestPolicy } from './contracts';
+  SessionEvent, SessionMode, SessionStore, Snapshot, StoredSession, TestPolicy, TransactionScope } from './contracts';
 
 function id(value: string) {
   if (typeof value !== 'string' || !value.trim() || value.length > 128) throw new SessionError('invalid_input');
@@ -37,7 +37,7 @@ export class SessionService {
     if (!Number.isSafeInteger(value) || value < 0) throw new SessionError('invalid_input');
     return value;
   }
-  private async transaction<T>(operation: (state: DatabaseState, now: number) => T): Promise<T> {
+  private async transaction<T>(scope: TransactionScope, operation: (state: DatabaseState, now: number) => T): Promise<T> {
     const result = await this.store.transaction(state => {
       const now = this.now();
       for (const session of state.sessions.values()) this.reconcile(state, session, now);
@@ -49,7 +49,7 @@ export class SessionService {
         state.accounts = baseline.accounts; state.sessions = baseline.sessions; state.commands = baseline.commands; state.ledger = baseline.ledger;
         return { value: undefined, error: error.code };
       }
-    });
+    }, scope);
     if (result.error) throw new SessionError(result.error);
     return result.value as T;
   }
@@ -117,7 +117,7 @@ export class SessionService {
   }
   async testLedger(accountId: string) {
     id(accountId);
-    return this.transaction(state => state.ledger.filter(entry => entry.accountId === accountId));
+    return this.transaction({ accountId }, state => state.ledger.filter(entry => entry.accountId === accountId));
   }
   private result(session: StoredSession, outcome: ResultCode, authorization?: Authorization): Result {
     return { outcome, snapshot: session.snapshot, ...(authorization ? { authorization } : {}) };
@@ -125,13 +125,13 @@ export class SessionService {
   /** Explicit synthetic grant, not a purchase/refill endpoint. Refuses replacement of an existing account. */
   async seedTestAccount(accountId: string, credits: number) {
     id(accountId); if (!Number.isSafeInteger(credits) || credits < 0) throw new SessionError('invalid_input');
-    return this.transaction(state => {
+    return this.transaction({ accountId }, state => {
       if (state.accounts.has(accountId)) throw new SessionError('idempotency_conflict');
       state.accounts.set(accountId, { allowed: true, credits });
     });
   }
   async testBalance(accountId: string) {
-    return this.transaction(state => {
+    return this.transaction({ accountId }, state => {
       const account = state.accounts.get(id(accountId));
       if (!account) throw new SessionError('no_access');
       return account;
@@ -140,7 +140,7 @@ export class SessionService {
   async start(p: Principal, commandId: string, mode: SessionMode, kind: 'paid' | 'trial' = 'paid') {
     this.principal(p); validateMode(mode);
     if (!['paid', 'trial'].includes(kind)) throw new SessionError('invalid_input');
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       for (const session of state.sessions.values()) if (session.accountId === p.accountId) this.reconcile(state, session, now);
       if (!state.accounts.get(p.accountId)?.allowed) throw new SessionError('no_access');
       return this.command(state, p, 'start', commandId, { mode, kind }, null, () => {
@@ -165,7 +165,7 @@ export class SessionService {
   /** Readiness must come from the eventual trusted adapter; these flags are only observations. */
   async ready(p: Principal, sessionId: string, readiness: Readiness) {
     if (!readiness || [readiness.inputReady, readiness.outputReady, readiness.providerReady, readiness.avatarReady].some(v => typeof v !== 'boolean')) throw new SessionError('invalid_input');
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       if (session.snapshot.lifecycle !== 'preparing') return this.result(session, session.snapshot.lifecycle === 'active' ? 'already_active' : 'released');
       const valid = readiness.inputReady && readiness.outputReady && readiness.providerReady && (session.snapshot.mode.visual === 'hidden' || readiness.avatarReady);
@@ -175,7 +175,7 @@ export class SessionService {
   }
   async confirm(p: Principal, sessionId: string, commandId: string, revision: number, mode: SessionMode) {
     validateMode(mode); positive(revision);
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       return this.command(state, p, 'confirm', commandId, { revision, mode }, session, () => {
         const s = session.snapshot;
@@ -189,7 +189,7 @@ export class SessionService {
     });
   }
   async cancelPreparation(p: Principal, sessionId: string, commandId: string) {
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       return this.command(state, p, 'cancel-preparation', commandId, {}, session, () => {
         if (session.snapshot.lifecycle === 'active') return this.result(session, 'already_active');
@@ -199,7 +199,7 @@ export class SessionService {
   }
   async reconnect(p: Principal, sessionId: string, commandId: string, expectedConnectionId: string) {
     id(expectedConnectionId);
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now);
       if (session.snapshot.controller.clientId !== p.clientId) throw new SessionError('controller_conflict');
       return this.command(state, p, 'reconnect', commandId, { expectedConnectionId, connectionId: p.connectionId }, session, () => {
@@ -211,7 +211,7 @@ export class SessionService {
   }
   async snapshot(p: Principal, sessionId: string, afterSequence?: number): Promise<Replay> {
     if (afterSequence !== undefined && (!Number.isSafeInteger(afterSequence) || afterSequence < 0)) throw new SessionError('invalid_input');
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       const first = session.events[0]?.sequence ?? session.snapshot.sequence + 1;
       const requiresSnapshot = afterSequence === undefined || afterSequence > session.snapshot.sequence || afterSequence < first - 1;
@@ -224,7 +224,7 @@ export class SessionService {
   async commitUtterance(p: Principal, sessionId: string, commandId: string, utteranceId: string, transcript: string) {
     id(utteranceId);
     if (typeof transcript !== 'string' || !transcript.trim() || transcript.length > this.policy.maxUtteranceChars) throw new SessionError('invalid_input');
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       return this.command(state, p, 'utterance', commandId, { utteranceId, transcript }, session, () => {
         this.active(session);
@@ -243,7 +243,7 @@ export class SessionService {
   }
   async cancelResponse(p: Principal, sessionId: string, commandId: string, target: Authorization) {
     this.validateAuthorization(target);
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       return this.command(state, p, 'cancel-response', commandId, target, session, () => {
         const current = session.snapshot.authorization;
@@ -263,7 +263,7 @@ export class SessionService {
     const speech = normalizeSpeech(rawSpeech);
     // media references remain internal asset IDs until an authenticated media adapter is connected.
     if (speech.audioUrl !== undefined || !speech.id.trim()) throw new SessionError('invalid_input');
-    return this.transaction((state, now) => {
+    return this.transaction({ sessionId }, (state, now) => {
       const session = state.sessions.get(sessionId);
       if (!session) throw new SessionError('not_found');
       this.reconcile(state, session, now); this.active(session);
@@ -281,7 +281,7 @@ export class SessionService {
     });
   }
   async end(p: Principal, sessionId: string, commandId: string) {
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId: p.accountId }, (state, now) => {
       const session = this.owned(state, p, sessionId, now); this.controller(session, p);
       return this.command(state, p, 'end', commandId, {}, session, () => {
         this.terminate(state, session, session.snapshot.lifecycle === 'preparing' ? 'canceled' : 'ended');
@@ -291,15 +291,22 @@ export class SessionService {
   }
   async revokeTestAccount(accountId: string) {
     id(accountId);
-    return this.transaction((state, now) => {
+    return this.transaction({ accountId }, (state, now) => {
       const account = state.accounts.get(accountId);
       if (!account) throw new SessionError('no_access');
       account.allowed = false;
       for (const session of state.sessions.values()) if (session.accountId === accountId) this.reconcile(state, session, now);
     });
   }
+  /** Reconcile timing/revocation only; unlike takeover recovery, this never invalidates a still-active response. */
+  async reconcileAccount(accountId: string) {
+    id(accountId);
+    return this.transaction({ accountId }, state => {
+      if (!state.accounts.has(accountId)) throw new SessionError('no_access');
+    });
+  }
   async recover() {
-    return this.transaction((state, now) => {
+    return this.transaction({ all: true }, (state, now) => {
       for (const session of state.sessions.values()) {
         this.reconcile(state, session, now);
         // New coordinator cannot prove exclusive ownership of old provider work.

@@ -1,6 +1,6 @@
 # Backend acceptance ledger
 
-October 13, 2026. Standalone extraction, command transport and Docker foundation verified.
+October 13, 2026. Standalone foundation, durable PostgreSQL metadata and local dashboard data verified.
 
 ## Completed before extraction
 
@@ -12,7 +12,7 @@ The user supplied EdKo2001/mind-space-backend and approved TypeScript, Node 24, 
 
 ## Current boundary
 
-No production identity, durable session database, inference/voice, billing, appointments, history persistence, telemetry or mobile transport is connected. In-memory fixture tests are synthetic. Deployment/native/production acceptance remains open.
+Durable internal session metadata and redacted local dashboard aggregates are connected. Production identity/admin access, inference/voice, billing, appointments, sensitive history, measured presence/voice/cost telemetry and mobile transport remain unconnected. Fixture identities are synthetic. Deployment/native/production acceptance remains open.
 
 
 ## October 13 standalone server and Docker checkpoint
@@ -24,3 +24,14 @@ No production identity, durable session database, inference/voice, billing, appo
 - Mobile lint/typecheck and16-route export PASS after extraction. Doctor20/21 retains existing Expo57.0.27/router57.0.25 versus57.0.28/57.0.26 patch drift; no mobile dependency/renderer/UI changes.
 - Pending: durable PostgreSQL session/ledger/outbox adapter and migrations, real identity/providers, media byte/alignment verification, live event publisher, mobile wiring, production timing/retention/billing decisions. No real-user conversation, native/device, audible-latency or production acceptance. The internal profile is synthetic domain behavior only.
 - Services remain running under Compose project mindspace-backend; volume preserved. npm development mode remains available.
+
+## October 13 durable store and dashboard data checkpoint
+
+- Added PostgreSQL session/command/ledger/fingerprint/event/outbox storage. State and accounting commit atomically under account-scoped locks; immutable accounting and command outcomes are enforced in SQL. Startup applies checksum-verified additive migrations; runtime migrated from version1 to2 without changing version1 SQL or deleting data. A configured storage failure never falls back to memory.
+- Expiry maintenance releases abandoned reservations and terminates elapsed sessions across workers while preserving live response authority. Outbox leases/reclaim and state revalidation are implemented; external/live publication is still pending. Private speech persistence is rejected as `content_storage_unconfigured`; raw transcripts/audio/notes are not stored.
+- Added `GET /v1/dashboard` matching the actual version1 adapter in chat “Dashboard & Analytics” (`01a13248-0fe1-7503-90cc-3e789a2fb95d`). The frontend supplies UTC start/end and IANA timezone; the backend echoes the exact range. Completed sessions/backend elapsed minutes and current lifecycle diagnostics come from PostgreSQL; health reflects real reads. Unknown voice/cost/presence/chart/queue metrics remain null, with explanations. No session/account/controller IDs are returned.
+- Compose explicitly enables the localhost aggregate endpoint with exact local browser origins and no-store responses. npm access is disabled by default. This development mode is not production admin authentication. Dashboard/mobile files were not edited or connected during this checkpoint.
+- Validation PASS: local check,47 unit/transport tests and actual HTTP smoke; Docker rebuild repeats check+47 tests+smoke.18 real PostgreSQL integration tests pass, no skips, including actual worker SIGKILL after committed activation, retry without second debit, concurrent admission, isolation/rollback, private-content rejection, lease reclaim, stale publication, expiry and dashboard window/unit checks.
+- Live host→container dashboard HTTP200 parsed successfully through the separate dashboard's actual `requestDashboard` function. Exact range/CORS/no-store checks PASS; query credentials400 and denied origin403. `/ready` remains503 because identity/dialogue/speech are unavailable, with durableSessionStore available. Evidence: `evidence/dashboard-smoke.json`; contract and handoff: `docs/dashboard-api.md`.
+- Real runtime SQL inspection: migrations1+2 applied;0 runtime accounts seeded;0 disposable `ms_test_*` schemas remain. Persistent Compose database volume preserved. Current zero completions is an actual empty internal store, not mock customer data.
+- Remaining: frontend activation of its existing API adapter, production admin/user identity, presence/history measurement and approved presence rules, provider usage/outcome/voice acknowledgments, media retention/alignment, live publication/mobile integration and production policy. No public deployment, real AI/voice, audible performance, billing or device acceptance claimed.

@@ -8,13 +8,15 @@ import { dispatchCommand } from '../session/commands';
 import type { SessionService } from '../session/service';
 import { AuthenticationError, unavailableIdentity } from './auth';
 import type { IdentityAdapter } from './auth';
+import { registerDashboard } from '../dashboard/routes';
+import type { DashboardOptions } from '../dashboard/routes';
 
-export type ServerOptions = { service: SessionService; identity?: IdentityAdapter; database: DatabaseProbe };
+export type ServerOptions = { service: SessionService; identity?: IdentityAdapter; database: DatabaseProbe; storage?: DatabaseProbe; dashboard?: DashboardOptions };
 export function errorResult(error: unknown): { status: number; body: { ok: false; error: string } } {
   if (error instanceof AuthenticationError) return { status: error.code === 'unauthenticated' ? 401 : 503, body: { ok: false, error: error.code } };
   if (error instanceof SessionError) {
     const status = error.code === 'invalid_input' ? 400 : error.code === 'not_found' ? 404
-      : ['no_access', 'forbidden'].includes(error.code) ? 403 : error.code === 'provider_unavailable' ? 503 : 409;
+      : ['no_access', 'forbidden'].includes(error.code) ? 403 : ['provider_unavailable', 'content_storage_unconfigured'].includes(error.code) ? 503 : 409;
     return { status, body: { ok: false, error: error.code } };
   }
   return { status: 500, body: { ok: false, error: 'internal_error' } };
@@ -41,10 +43,12 @@ export async function createServer(options: ServerOptions) {
     const response = errorResult(error); return reply.code(response.status).send(response.body);
   });
   app.get('/health', async () => ({ ok: true, service: 'mind-space-backend', profile: 'internal-test-v1' }));
+  registerDashboard(app, options.dashboard);
   app.get('/ready', async (_request, reply) => {
     const database = await options.database.check();
+    const storage = await options.storage?.check();
     return reply.code(503).send({ ok: false, profile: 'internal-test-v1', components: {
-      databaseConnection: database ? 'reachable' : 'unavailable', durableSessionStore: 'unavailable',
+      databaseConnection: database ? 'reachable' : 'unavailable', durableSessionStore: storage ? 'available' : 'unavailable',
       identity: 'unavailable', dialogue: 'unavailable', speech: 'unavailable',
     } });
   });
@@ -81,6 +85,6 @@ export async function createServer(options: ServerOptions) {
       }).catch(() => { socket.terminate(); }).finally(() => { pending--; });
     });
   });
-  app.addHook('onClose', async () => { await options.database.close(); });
+  app.addHook('onClose', async () => { await options.database.close(); await options.storage?.close(); });
   return app;
 }

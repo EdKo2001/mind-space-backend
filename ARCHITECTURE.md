@@ -8,7 +8,7 @@ The workflow below preserves the reviewed architecture. References to the mobile
 
 Draft architecture · Revised October 13, 2026
 
-Implementation checkpoint: the user subsequently authorized local work with endpoints deferred. The first [session foundation](README.md) now implements synthetic domain/contract tests. The provider/database/mobile boundaries below remain proposed and unconnected; production policies are not selected by the test profile.
+Implementation checkpoint: the user subsequently authorized local work and a backend matching the operations dashboard. The [session foundation](README.md) now includes HTTP/WS transport, durable PostgreSQL metadata/ledger/outbox, expiry maintenance and the local aggregate [dashboard contract](docs/dashboard-api.md). Identity, provider/media delivery, production admin access and mobile integration remain unconnected; production policies are not selected by the test profile. The design below includes future workflows as well as that bounded implementation.
 
 The backend will own authenticated access, session lifecycle, usage accounting and AI/voice orchestration. The mobile app will own presentation, audio playback and avatar rendering. This workflow proposes those boundaries without selecting providers, provisioning infrastructure or changing the current local demo.
 

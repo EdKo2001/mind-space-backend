@@ -15,9 +15,11 @@
     "test": "npm run build && node --test dist/__tests__/*.test.js",
     "test:backend": "npm test",
     "smoke": "npm run build && node dist/local-smoke.js",
+    "smoke:dashboard": "node scripts/dashboard-smoke.cjs",
     "sync:contract": "node scripts/sync-mobile-contract.cjs",
     "start": "node --env-file-if-exists=.env dist/main.js",
-    "dev": "npm run build && npm start"
+    "dev": "npm run build && npm start",
+    "test:postgres": "npm run build && node --test dist/integration/postgres.test.js"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

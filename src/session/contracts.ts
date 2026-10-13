@@ -24,7 +24,7 @@ export type ResultCode = 'created' | 'ready' | 'awaiting_readiness' | 'activated
 export type Result = { outcome: ResultCode; snapshot: Snapshot; authorization?: Authorization };
 export type ErrorCode = 'invalid_input' | 'not_found' | 'forbidden' | 'controller_conflict' | 'idempotency_conflict'
   | 'no_access' | 'no_credit' | 'session_conflict' | 'not_ready' | 'stale_ready' | 'not_active'
-  | 'stale_response' | 'segment_conflict' | 'segment_order' | 'provider_unavailable' | 'capacity_unavailable';
+  | 'content_storage_unconfigured' | 'stale_response' | 'segment_conflict' | 'segment_order' | 'provider_unavailable' | 'capacity_unavailable';
 export class SessionError extends Error {
   constructor(readonly code: ErrorCode) { super(code); this.name = 'SessionError'; }
 }
@@ -48,7 +48,10 @@ export type DatabaseState = {
   accounts: Map<string, Account>; sessions: Map<string, StoredSession>; commands: Map<string, CommandRecord>; ledger: TestLedgerEntry[];
 };
 /** Callback must be synchronous: no provider/client/network waits inside a transaction. */
-export interface SessionStore { transaction<T>(operation: (state: DatabaseState) => T): Promise<T> }
+export type TransactionScope = { accountId: string } | { sessionId: string } | { all: true };
+export interface SessionStore {
+  transaction<T>(operation: (state: DatabaseState) => T, scope?: TransactionScope): Promise<T>;
+}
 export type Readiness = { inputReady: boolean; outputReady: boolean; providerReady: boolean; avatarReady: boolean };
 export type Replay = { snapshot: Snapshot; events: SessionEvent[]; requiresSnapshot: boolean };
 
