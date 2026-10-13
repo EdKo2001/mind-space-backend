@@ -8,6 +8,7 @@ import { decodeSnapshot, decodeEvent } from '../session/wire';
 import { migrations, migrationVersion } from './migrations';
 import type { DatabaseProbe } from './connection';
 import type { DashboardRange, DashboardReader, DashboardTotals } from '../dashboard/contracts';
+import { fields, identifier, object } from '../session/commands';
 
 export type ClaimedEvent = { event: SessionEvent; claimToken: string };
 const empty = (): DatabaseState => ({ accounts: new Map(), sessions: new Map(), commands: new Map(), ledger: [] });
@@ -139,6 +140,10 @@ export class PostgresSessionStore implements SessionStore, DatabaseProbe, Dashbo
       activeSessions: safeNumber(row.active), preparingSessions: safeNumber(row.preparing), overdueSessions: safeNumber(row.overdue) };
   }
   async transaction<T>(operation: (state: DatabaseState) => T, scope: TransactionScope = { all: true }): Promise<T> {
+    const selection = object(scope);
+    if ('accountId' in selection) { fields(selection, ['accountId']); identifier(selection.accountId); }
+    else if ('sessionId' in selection) { fields(selection, ['sessionId']); identifier(selection.sessionId); }
+    else { fields(selection, ['all']); if (selection.all !== true) throw new SessionError('invalid_input'); }
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN'); await this.globalLock(client, 'all' in scope);

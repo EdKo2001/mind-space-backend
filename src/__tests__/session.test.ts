@@ -133,6 +133,17 @@ test('rebind rejects old connections, other devices and competing connection cla
   await assert.rejects(f.service.reconnect({ ...next, clientId: 'client-b' }, f.sessionId, 'takeover', next.connectionId), code('controller_conflict'));
   await assert.rejects(f.service.reconnect({ ...principal, connectionId: 'connection-c' }, f.sessionId, 'competing', principal.connectionId), code('controller_conflict'));
 });
+test('superseded controllers cannot recover state through old Start or Reconnect retries', async () => {
+  const f = await active(), next = { ...principal, connectionId: 'connection-b' }, third = { ...principal, connectionId: 'connection-c' };
+  await f.service.reconnect(next, f.sessionId, 'rebind-b', principal.connectionId);
+  await assert.rejects(f.service.start(principal, 'start', mode), code('controller_conflict'));
+  const validRetry = await f.service.start(next, 'start', mode);
+  assert.equal(validRetry.snapshot.controller.connectionId, next.connectionId);
+  await f.service.reconnect(third, f.sessionId, 'rebind-c', next.connectionId);
+  await assert.rejects(f.service.reconnect(next, f.sessionId, 'rebind-b', principal.connectionId), code('controller_conflict'));
+  assert.equal((await f.service.start(third, 'start', mode)).snapshot.endsAt, f.admitted.snapshot.endsAt);
+  assert.deepEqual((await f.service.testLedger(principal.accountId)).map(entry => entry.effect), ['reserved', 'consumed']);
+});
 test('unowned or nonexistent sessions have the same error and isolated test balance', async () => {
   const f = await active(); const stranger = { ...principal, accountId: 'stranger' };
   await assert.rejects(f.service.snapshot(stranger, f.sessionId), code('not_found'));

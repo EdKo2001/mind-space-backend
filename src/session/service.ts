@@ -104,7 +104,9 @@ export class SessionService {
     const hash = fingerprint(payload), previous = state.commands.get(key);
     if (previous) {
       if (previous.fingerprint !== hash) throw new SessionError('idempotency_conflict');
-      const current = state.sessions.get(previous.sessionId)!;
+      const current = state.sessions.get(previous.sessionId);
+      if (!current || current.accountId !== p.accountId) throw new SessionError('not_found');
+      this.controller(current, p);
       return { outcome: previous.outcome, snapshot: current.snapshot, authorization: previous.authorization };
     }
     const result = apply();

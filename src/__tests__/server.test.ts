@@ -6,6 +6,7 @@ import { AuthenticationError } from '../transport/auth';
 import { createDatabaseProbe } from '../database/connection';
 import { SessionService } from '../session/service';
 import { MemorySessionStore } from '../session/memory-store';
+import type { Principal } from '../session/contracts';
 
 const principal = { accountId: 'synthetic-http-user', clientId: 'synthetic-client', connectionId: 'synthetic-connection' };
 const start = { protocolVersion: 1, commandId: 'synthetic-start', type: 'session.start', mode: { input: 'text', visual: 'hidden' }, kind: 'paid' };
@@ -85,4 +86,18 @@ test('WebSocket identity is checked again after the upgrade', { timeout: 5000 },
 test('PostgreSQL port is explicitly unconfigured and rejects incompatible URL schemes', async () => {
   const probe = createDatabaseProbe(); assert.equal(await probe.check(), false); await probe.close();
   assert.throws(() => createDatabaseProbe('https://example.com'), /Invalid PostgreSQL configuration/);
+});
+test('malformed verifier results cannot authorize HTTP commands or WebSocket handshakes', async t => {
+  const { app, service } = await fixture(); t.after(() => app.close());
+  const accessor = Object.defineProperty({ ...principal }, 'connectionId', { enumerable: true, get() { return principal.connectionId; } });
+  for (const malformed of [null, {}, { ...principal, accountId: undefined }, { ...principal, clientId: ' ' },
+    { ...principal, connectionId: 'x'.repeat(129) }, { ...principal, extra: 'unexpected' }, Object.assign([], principal), accessor]) {
+    const invalid = await createServer({ service, database: createDatabaseProbe(), identity: { async verify() { return malformed as Principal; } } });
+    try {
+      const result = await invalid.inject({ method: 'POST', url: '/v1/session/commands', headers, payload: start });
+      assert.equal(result.statusCode, 503); assert.deepEqual(result.json(), { ok: false, error: 'identity_unavailable' });
+      await assert.rejects(invalid.injectWS('/v1/session/channel', { headers }), /503/);
+    } finally { await invalid.close(); }
+  }
+  assert.equal((await service.testBalance(principal.accountId)).credits, 1);
 });

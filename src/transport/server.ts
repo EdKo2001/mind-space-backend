@@ -7,7 +7,7 @@ import { SessionError } from '../session/contracts';
 import type { Principal } from '../session/contracts';
 import { CommandFailure, dispatchCommand } from '../session/commands';
 import type { SessionService } from '../session/service';
-import { AuthenticationError, unavailableIdentity } from './auth';
+import { AuthenticationError, unavailableIdentity, verifiedPrincipal } from './auth';
 import type { IdentityAdapter } from './auth';
 import { registerDashboard } from '../dashboard/routes';
 import type { DashboardOptions } from '../dashboard/routes';
@@ -45,8 +45,8 @@ export async function createServer(options: ServerOptions) {
     if (Object.keys((request.query ?? {}) as object).length) throw new SessionError('invalid_input');
     const authorization = request.headers.authorization;
     if (!authorization || !/^Bearer [^\s]+$/.test(authorization)) throw new AuthenticationError('unauthenticated');
-    const principal = await identity.verify(authorization);
-    principals.set(request, { ...principal });
+    const principal = verifiedPrincipal(await identity.verify(authorization));
+    principals.set(request, principal);
   }
   app.setErrorHandler((error, _request, reply) => {
     const code = (error as { code?: string }).code;
@@ -80,7 +80,7 @@ export async function createServer(options: ServerOptions) {
       socket.send(payload, error => { if (error) socket.terminate(); }); return true;
     }
     async function verify() {
-      const principal = await identity.verify(request.headers.authorization!);
+      const principal = verifiedPrincipal(await identity.verify(request.headers.authorization!));
       if (principal.accountId !== initial.accountId || principal.clientId !== initial.clientId || principal.connectionId !== initial.connectionId) throw new AuthenticationError('unauthenticated');
       return principal;
     }

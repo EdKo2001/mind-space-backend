@@ -11,7 +11,7 @@ import { reconcileDueAccounts, startMaintenance } from '../database/maintenance'
 import { PostgresSessionStore } from '../database/postgres-store';
 import { SessionService } from '../session/service';
 import { SessionError } from '../session/contracts';
-import type { Result } from '../session/contracts';
+import type { Result, TransactionScope } from '../session/contracts';
 import { migrationSql } from '../database/migrations';
 import { dashboardSnapshot } from '../dashboard/service';
 import WebSocket from 'ws';
@@ -219,6 +219,23 @@ test('real PostgreSQL account scopes do not permit cross-account writes', async 
   const f = await fixture(t);
   await assert.rejects(f.a.transaction(state => { state.accounts.set('wrong-account', { allowed: true, credits: 99 }); }, { accountId: principal.accountId }), /Storage scope violation/);
   assert.equal((await f.admin.query(`SELECT COUNT(*) FROM ${f.schema}.accounts`)).rows[0].count, '1');
+});
+test('real PostgreSQL malformed scopes cannot silently select all accounts', async t => {
+  const f = await fixture(t); let called = false;
+  for (const malformed of [null, {}, { accountId: undefined }, { accountId: ' ' }, { sessionId: 1 }, { all: false }, { all: true, accountId: principal.accountId }]) {
+    await assert.rejects(f.a.transaction(() => { called = true; }, malformed as TransactionScope), errorCode('invalid_input'));
+  }
+  assert.equal(called, false); assert.equal((await f.serviceA.testBalance(principal.accountId)).credits, 2);
+});
+test('real PostgreSQL Start and Reconnect retries retain current-controller authority across stores', async t => {
+  const f = await fixture(t), { sessionId, admitted } = await active(f);
+  const next = { ...principal, connectionId: 'synthetic-next-connection' }, third = { ...principal, connectionId: 'synthetic-third-connection' };
+  await f.serviceB.reconnect(next, sessionId, 'rebind-next', principal.connectionId);
+  await assert.rejects(f.serviceA.start(principal, 'start', mode), errorCode('controller_conflict'));
+  assert.equal((await f.serviceA.start(next, 'start', mode)).snapshot.endsAt, admitted.snapshot.endsAt);
+  await f.serviceA.reconnect(third, sessionId, 'rebind-third', next.connectionId);
+  await assert.rejects(f.serviceB.reconnect(next, sessionId, 'rebind-next', principal.connectionId), errorCode('controller_conflict'));
+  assert.deepEqual((await f.serviceB.testLedger(principal.accountId)).map(entry => entry.effect), ['reserved', 'consumed']);
 });
 test('real PostgreSQL rejects private speech persistence and stores only transcript fingerprints', async t => {
   const f = await fixture(t), { sessionId } = await active(f), privateMarker = 'SYNTHETIC_PRIVATE_CONTENT_MARKER';

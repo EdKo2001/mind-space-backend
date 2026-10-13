@@ -10,14 +10,17 @@ import { AuthenticationError } from '../transport/auth';
 import { createDatabaseProbe } from '../database/connection';
 import { MemorySessionStore } from '../session/memory-store';
 import { SessionService } from '../session/service';
+import type { Principal } from '../session/contracts';
+import { ClientPlaybackGuard } from '../session/playback-guard';
 
 const principal = { accountId: 'synthetic-live-user', clientId: 'synthetic-client', connectionId: 'synthetic-connection' };
 const mode = { input: 'text' as const, visual: 'hidden' as const };
 const readiness = { inputReady: true, outputReady: true, providerReady: true, avatarReady: false };
-async function fixture(t: TestContext, interval = 10_000) {
+async function fixture(t: TestContext, interval = 10_000, history = 2) {
   let valid = true;
+  let verifiedIdentity: unknown = { ...principal };
   const store = new MemorySessionStore(), service = new SessionService(store, { profile: 'internal-test-v1', timing: 'absolute-deadline',
-    reservationMs: 60_000, readinessMs: 10_000, maxActiveSessions: 1, maxEventsPerSession: 2, maxUtteranceChars: 2000 });
+    reservationMs: 60_000, readinessMs: 10_000, maxActiveSessions: 1, maxEventsPerSession: history, maxUtteranceChars: 2000 });
   await service.seedTestAccount(principal.accountId, 2);
   const start = await service.start(principal, 'start', mode), sessionId = start.snapshot.sessionId;
   const ready = await service.ready(principal, sessionId, readiness);
@@ -26,7 +29,7 @@ async function fixture(t: TestContext, interval = 10_000) {
   const app = await createServer({ service, database: createDatabaseProbe(), live: { wakeups, pollIntervalMs: interval }, identity: {
     async verify(authorization) {
       if (!valid || authorization !== 'Bearer synthetic-test-token') throw new AuthenticationError('unauthenticated');
-      return { ...principal };
+      return verifiedIdentity as Principal;
     },
   } });
   const address = await app.listen({ port: 0, host: '127.0.0.1' });
@@ -37,7 +40,7 @@ async function fixture(t: TestContext, interval = 10_000) {
   const snapshot = once(socket, 'message', { signal: AbortSignal.timeout(2000) });
   socket.send(JSON.stringify({ protocolVersion: 1, type: 'session.snapshot', commandId: 'snapshot', sessionId }));
   await snapshot;
-  return { app, socket, service, store, wakeups, sessionId, revoke: () => { valid = false; } };
+  return { app, socket, service, store, wakeups, sessionId, revoke: () => { valid = false; }, setIdentity: (value: unknown) => { verifiedIdentity = value; } };
 }
 async function message(socket: WebSocket) { const [bytes] = await once(socket, 'message', { signal: AbortSignal.timeout(2000) }); return JSON.parse(bytes.toString()); }
 test('real WebSocket gets background state changes without sending another command; wakeups deduplicate', { timeout: 5000 }, async t => {
@@ -90,4 +93,39 @@ test('live protocol correlates successful and rejected commands independently fr
   assert.equal((await result).commandId, 'request-success');
   const update = message(f.socket); await f.service.end(principal, f.sessionId, 'internal-end'); f.wakeups.wake();
   const live = await update; assert.equal(live.type, 'events'); assert.equal(live.commandId, undefined);
+});
+test('live replay retains current speech across an unrelated revision', { timeout: 5000 }, async t => {
+  const f = await fixture(t), response = await f.service.commitUtterance(principal, f.sessionId, 'input', 'utterance', 'Synthetic input');
+  const authorization = message(f.socket); f.wakeups.wake(); await authorization;
+  await f.service.publishSpeech(f.sessionId, response.authorization!, 0, { id: 'synthetic-segment', text: 'Synthetic fixture', durationMs: 1000, visemes: [], gestures: [] });
+  // A same-controller rebind advances revision without invalidating this response/media.
+  await f.service.reconnect(principal, f.sessionId, 'same-binding', principal.connectionId);
+  const received = message(f.socket); f.wakeups.wake(); const live = await received;
+  assert.equal(live.value.requiresSnapshot, false);
+  assert.ok(live.value.events.some((event: { type: string }) => event.type === 'speech.ready'));
+  assert.equal(live.value.snapshot.authorization.responseId, response.authorization!.responseId);
+  const guard = new ClientPlaybackGuard(f.sessionId, principal.clientId, principal.connectionId);
+  guard.applySnapshot(live.value.snapshot);
+  assert.equal(guard.acceptSpeech(live.value.events.find((event: { type: string }) => event.type === 'speech.ready'), Date.now())?.id, 'synthetic-segment');
+});
+test('authoritative replay snapshot fences old generations and preserves local stop suppression', { timeout: 5000 }, async t => {
+  const f = await fixture(t, 10_000, 8);
+  const a = await f.service.commitUtterance(principal, f.sessionId, 'a', 'a', 'Synthetic first');
+  await f.service.publishSpeech(f.sessionId, a.authorization!, 0, { id: 'synthetic-a', text: 'Synthetic fixture', durationMs: 1000, visemes: [], gestures: [] });
+  const b = await f.service.commitUtterance(principal, f.sessionId, 'b', 'b', 'Synthetic second');
+  await f.service.publishSpeech(f.sessionId, b.authorization!, 0, { id: 'synthetic-b', text: 'Synthetic fixture', durationMs: 1000, visemes: [], gestures: [] });
+  await f.service.reconnect(principal, f.sessionId, 'unrelated', principal.connectionId);
+  const received = message(f.socket); f.wakeups.wake(); const live = await received;
+  assert.equal(live.value.requiresSnapshot, false);
+  const guard = new ClientPlaybackGuard(f.sessionId, principal.clientId, principal.connectionId);
+  guard.applySnapshot(live.value.snapshot);
+  const accepted = live.value.events.map((event: Parameters<ClientPlaybackGuard['acceptSpeech']>[0]) => guard.acceptSpeech(event, Date.now())).filter(Boolean);
+  assert.deepEqual(accepted.map((speech: { id: string }) => speech.id), ['synthetic-b']);
+  guard.stopLocally();
+  for (const event of live.value.events) assert.equal(guard.acceptSpeech(event, Date.now()), null);
+});
+test('malformed reverified identity fails closed before live state delivery', { timeout: 5000 }, async t => {
+  const f = await fixture(t); f.setIdentity({ ...principal, connectionId: undefined });
+  const received = message(f.socket), closed = once(f.socket, 'close'); f.wakeups.wake();
+  assert.deepEqual(await received, { ok: false, error: 'identity_unavailable' }); await closed;
 });

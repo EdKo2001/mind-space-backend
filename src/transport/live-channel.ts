@@ -1,6 +1,6 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import type { WebSocket } from 'ws';
-import type { Principal, Replay, Snapshot } from '../session/contracts';
+import type { Principal, Snapshot } from '../session/contracts';
 import type { SessionService } from '../session/service';
 import type { SessionWakeups } from './wakeups';
 
@@ -23,11 +23,9 @@ export function liveChannel(socket: WebSocket, options: LiveOptions, service: Se
         const replay = await service.snapshot(principal, current.sessionId, current.sequence);
         if (stopped || socket.readyState !== 1) return;
         if (replay.snapshot.sequence <= current.sequence && !replay.requiresSnapshot) return;
-        // Old-generation/old-controller replay is state recovery, never playable live work.
-        const currentEvents = replay.events.filter(event => event.snapshot.sessionRevision === replay.snapshot.sessionRevision);
-        const needsSnapshot = replay.requiresSnapshot || currentEvents.length !== replay.events.length;
-        const value: Replay = { snapshot: replay.snapshot, events: needsSnapshot ? [] : currentEvents, requiresSnapshot: needsSnapshot };
-        if (send({ ok: true, profile: 'internal-test-v1', type: 'events', value })) binding.sequence = replay.snapshot.sequence;
+        // Preserve the immutable replay journal. Apply the authoritative snapshot first; the
+        // existing playback guard fences old generations without discarding valid older-revision media.
+        if (send({ ok: true, profile: 'internal-test-v1', type: 'events', value: replay })) binding.sequence = replay.snapshot.sequence;
       } catch (error) { fail(error); }
     }).finally(() => { queued = false; if (dirty) wake(); });
   }

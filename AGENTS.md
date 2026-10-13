@@ -7,6 +7,7 @@ Read README.md, ARCHITECTURE.md and CURRENT_ACCEPTANCE_LEDGER.md before substant
 - TypeScript, Node.js 24, Fastify, PostgreSQL, WebSocket and Node's test runner.
 - Latest user decision authorizes Docker/Compose for API and PostgreSQL. Preserve database volumes; no destructive cleanup. npm scripts also remain usable.
 - Origin is https://github.com/EdKo2001/mind-space-backend.git. The mobile app has its own repository; do not change its remote or restore a duplicate backend there.
+- Latest user Git instruction: push validated work directly to main. Do not create pull requests unless the user changes this instruction. Preserve history; do not force-push.
 - Provider endpoints will be connected later. Keep unconfigured identity/inference/voice/billing adapters visibly unavailable; never fabricate successful AI, microphone, authentication, purchase or delivery results.
 - Keep provider credentials behind the backend. Do not add private transcript/notes/audio storage or telemetry without a defined consent/retention policy.
 - One modular backend plus separate execution for slow jobs; preserve generation/revision/sequence and conditional admission/controller invariants in ARCHITECTURE.md. No service proliferation or unapproved billing/retention policy.

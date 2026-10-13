@@ -1,20 +1,21 @@
 {
-  "checkedAt": "2026-10-13T20:39:20.900Z",
+  "checkedAt": "2026-10-13T20:51:58.198Z",
   "profile": "internal-test-v1",
   "validation": {
     "check": "PASS",
     "unitAndTransport": {
-      "passed": 53,
+      "passed": 58,
       "failed": 0,
       "skipped": 0
     },
     "realPostgres": {
-      "passed": 22,
+      "passed": 24,
       "failed": 0,
       "skipped": 0
     },
     "httpSmoke": "PASS",
-    "liveDashboardAdapter": "PASS"
+    "liveDashboardAdapter": "PASS",
+    "authorityRegressions": "PASS: malformed verifier/scope, stale-controller retry, current older-revision speech, superseded generation and local stop"
   },
   "runtime": {
     "healthStatus": 200,
