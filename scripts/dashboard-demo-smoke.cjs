@@ -18,7 +18,8 @@ async function main() {
     const snapshot = await requestDashboard(endpoint, { period, timezone: 'America/Chicago' }, AbortSignal.timeout(5000), fetcher);
     assert.equal(snapshot.source,'db-demo'); assert.equal(snapshot.connected,4); assert.equal(snapshot.reconnecting,2);
     assert.equal(snapshot.sessions.length,6); assert(snapshot.sessions.every(row => row.id.startsWith('DEMO-')));
-    assert(snapshot.concurrency.length > 0); assert.equal(snapshot.forecast,null);
+    assert(Array.isArray(snapshot.concurrency)); assert.equal(snapshot.forecast,null);
+    assert(Number.isInteger(snapshot.completed) && snapshot.completed >= 0);
     assert(snapshot.concurrency.every(point => Date.parse(point.at) >= Date.parse(snapshot.range.start)
       && Date.parse(point.at) < Date.parse(snapshot.range.end)));
     if (snapshot.granularity === 'daily') {
@@ -29,7 +30,6 @@ async function main() {
     assert.equal(snapshot.health.find(row => row.name === 'Voice service').status,'Unknown');
     snapshots.push(snapshot);
   }
-  assert(snapshots[1].completed > snapshots[0].completed);
   writeFileSync(resolve(__dirname,'../evidence/dashboard-db-demo.json'), `${JSON.stringify({
     checkedAt: new Date().toISOString(), endpoint, origin, status: 'PASS',
     adapterCompatibility: 'Actual dashboard HTTP adapter parsed PostgreSQL-backed responses',

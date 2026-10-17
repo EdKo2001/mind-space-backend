@@ -28,3 +28,8 @@ October13,2026.
 ## Connected-session prerequisite audit
 
 `connection-readiness.json` records current health200/readiness503, unauthenticated401 and unconfigured identity503, migrations1+2,0 runtime accounts,66 demo rows/721 samples and0 test schemas. The local DB demo is verified; a connected authenticated AI/voice/avatar session remains blocked on the user-deferred identity/provider inputs and temporary-media policy. Fixture transport/cancellation tests and synthetic voice metrics do not prove audible delivery or latency targets. The broader goal is not complete.
+
+## October17 dashboard smoke maintenance
+
+- The existing frontend adapter and backend envelope remain compatible. Reproduced smoke rejection of contract-valid empty history without a live database. Fixed the activity assumptions; added3 isolated subprocess regressions with a synthetic adapter. Backend check/69 tests/localhost HTTP smoke and dashboard check/13 tests PASS.
+- No current PostgreSQL/Compose acceptance claim: Docker Desktop/engine is stopped and port3001 is unavailable. Seed data and earlier live evidence remain untouched. AGENTS.md now requires owned-container/Desktop shutdown at handoff, volume preservation and ownership checks. No Docker Desktop/backend/virtualization process was running at cleanup verification.

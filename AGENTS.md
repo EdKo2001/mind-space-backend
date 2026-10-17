@@ -18,3 +18,9 @@ Read README.md, ARCHITECTURE.md and CURRENT_ACCEPTANCE_LEDGER.md before substant
 ## Validation
 
 Run npm run check, npm test and npm run smoke before declaring a backend milestone complete. Verify changed transports through actual HTTP/WebSocket tests; use a real configured PostgreSQL for durable-storage claims. Update the ledger with test totals, commands, evidence and pending connections. No simulated database or authentication success claims.
+
+## Docker shutdown at handoff
+
+- When finishing, pausing or stopping backend work, stop the task-owned Compose containers and quit Docker Desktop to release RAM. Leave them running only when the human explicitly requests it for that handoff; an earlier leave-running request is not a permanent exemption.
+- Check ownership first. Preserve unrelated/shared Docker work; if another active task needs the engine, stop only this task's containers and report why Docker Desktop remains running.
+- Preserve database volumes, seed data and source files. Use `docker compose stop`; never delete volumes or prune data as shutdown cleanup. Verify owned containers have stopped and Docker Desktop has quit. If Docker is already stopped, do not start it just to check or clean up.
